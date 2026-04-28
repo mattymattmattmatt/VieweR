@@ -4,12 +4,14 @@ import { XRHandModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.160/exa
 
 let scene, camera, renderer;
 let panoMesh, sphereMesh, material;
-let controllers = [], hands = [], interactiveObjects = [];
 
+let controllers = [], hands = [], interactiveObjects = [];
 let raycaster = new THREE.Raycaster();
 let tempMatrix = new THREE.Matrix4();
 
 let backButton, backTimer = null;
+
+let loadedFiles = []; // IMPORTANT
 
 init();
 animate();
@@ -27,31 +29,6 @@ function init() {
 
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.xr.enabled = true;
-  renderer.xr.setReferenceSpaceType('local');
-
-  // FIXED VR BUTTON
-  if (navigator.xr) {
-    const btn = VRButton.createButton(renderer, {
-      optionalFeatures: ['hand-tracking']
-    });
-
-    btn.style.position = "absolute";
-    btn.style.bottom = "20px";
-    btn.style.left = "50%";
-    btn.style.transform = "translateX(-50%)";
-    btn.style.zIndex = "999";
-
-    document.body.appendChild(btn);
-  }
-
-  // Hide UI in VR
-  renderer.xr.addEventListener("sessionstart", () => {
-    document.getElementById("ui").style.display = "none";
-  });
-
-  renderer.xr.addEventListener("sessionend", () => {
-    document.getElementById("ui").style.display = "block";
-  });
 
   createPanoMesh();
   createSphereMesh();
@@ -60,7 +37,55 @@ function init() {
   setupControllers();
   setupHands();
   setupFolderInput();
+
+  createEnterVRButton();
 }
+
+---
+
+function createEnterVRButton() {
+  const btn = document.createElement("button");
+  btn.innerText = "Enter VR Gallery";
+  btn.style.position = "absolute";
+  btn.style.bottom = "20px";
+  btn.style.left = "50%";
+  btn.style.transform = "translateX(-50%)";
+  btn.style.padding = "12px 20px";
+  btn.style.fontSize = "16px";
+  btn.style.display = "none";
+  btn.style.zIndex = "999";
+
+  document.body.appendChild(btn);
+
+  btn.onclick = async () => {
+    const vrBtn = VRButton.createButton(renderer, {
+      optionalFeatures: ['hand-tracking']
+    });
+
+    document.body.appendChild(vrBtn);
+    vrBtn.click(); // auto enter VR
+
+    btn.style.display = "none";
+
+    // build gallery once in VR
+    createGallery(loadedFiles);
+  };
+}
+
+---
+
+function setupFolderInput(){
+  document.getElementById("folderInput").addEventListener("change",(e)=>{
+    loadedFiles = Array.from(e.target.files)
+      .filter(f => f.name.endsWith(".vr.jpg") || f.type.startsWith("image"));
+
+    if (loadedFiles.length > 0) {
+      document.querySelector("button").style.display = "block";
+    }
+  });
+}
+
+---
 
 function createPanoMesh() {
   const geometry = new THREE.CylinderGeometry(5,5,3,128,64,true,-Math.PI/2,Math.PI);
@@ -75,7 +100,6 @@ function createPanoMesh() {
       varying vec2 vUv;
       uniform sampler2D depthMap;
       uniform float depthScale;
-
       void main() {
         vUv = uv;
         float depth = texture2D(depthMap, uv).r;
@@ -98,23 +122,27 @@ function createPanoMesh() {
   scene.add(panoMesh);
 }
 
-function createSphereMesh() {
-  const geometry = new THREE.SphereGeometry(50, 64, 64);
-  geometry.scale(-1, 1, 1);
+---
 
-  sphereMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+function createSphereMesh() {
+  const geo = new THREE.SphereGeometry(50,64,64);
+  geo.scale(-1,1,1);
+
+  sphereMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial());
   sphereMesh.visible = false;
 
   scene.add(sphereMesh);
 }
 
-function createBackButton() {
-  const geo = new THREE.PlaneGeometry(0.6, 0.25);
-  const mat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+---
 
-  backButton = new THREE.Mesh(geo, mat);
-  backButton.position.set(0, 1.2, -1);
-  backButton.visible = false;
+function createBackButton() {
+  const geo = new THREE.PlaneGeometry(0.6,0.25);
+  const mat = new THREE.MeshBasicMaterial({color:0x222222});
+
+  backButton = new THREE.Mesh(geo,mat);
+  backButton.position.set(0,1.2,-1);
+  backButton.visible=false;
 
   backButton.userData.onClick = showGallery;
 
@@ -122,29 +150,27 @@ function createBackButton() {
   interactiveObjects.push(backButton);
 }
 
-function showBackButton() {
-  backButton.visible = true;
-
-  if (backTimer) clearTimeout(backTimer);
-
-  backTimer = setTimeout(() => {
-    backButton.visible = false;
-  }, 4000);
+function showBackButton(){
+  backButton.visible=true;
+  if(backTimer) clearTimeout(backTimer);
+  backTimer=setTimeout(()=>backButton.visible=false,4000);
 }
 
-function showGallery() {
-  panoMesh.visible = false;
-  sphereMesh.visible = false;
-  backButton.visible = false;
+function showGallery(){
+  panoMesh.visible=false;
+  sphereMesh.visible=false;
+  backButton.visible=false;
 }
 
-function setupControllers() {
-  for (let i=0;i<2;i++){
-    const c = renderer.xr.getController(i);
+---
+
+function setupControllers(){
+  for(let i=0;i<2;i++){
+    const c=renderer.xr.getController(i);
 
     c.addEventListener('selectstart',()=>{
       showBackButton();
-      c.userData.selectPressed = true;
+      c.userData.selectPressed=true;
     });
 
     c.addEventListener('selectend',()=>c.userData.selectPressed=false);
@@ -154,16 +180,17 @@ function setupControllers() {
   }
 }
 
-function setupHands() {
-  const factory = new XRHandModelFactory();
+---
 
-  for (let i = 0; i < 2; i++) {
-    const hand = renderer.xr.getHand(i);
+function setupHands(){
+  const factory=new XRHandModelFactory();
 
-    hand.userData.isPinching = false;
-    hand.userData.lastPinchTime = 0;
+  for(let i=0;i<2;i++){
+    const hand=renderer.xr.getHand(i);
 
-    const model = factory.createHandModel(hand, 'mesh');
+    hand.userData.isPinching=false;
+
+    const model=factory.createHandModel(hand,'mesh');
     hand.add(model);
 
     scene.add(hand);
@@ -171,82 +198,19 @@ function setupHands() {
   }
 }
 
-function detectPinch(hand) {
-  const i = hand.joints['index-finger-tip'];
-  const t = hand.joints['thumb-tip'];
-  if (!i || !t) return false;
-  return i.position.distanceTo(t.position) < 0.025;
-}
-
-function handleHand(hand) {
-  const pinch = detectPinch(hand);
-  const now = performance.now();
-
-  if (pinch && !hand.userData.isPinching && now - hand.userData.lastPinchTime > 400) {
-    showBackButton();
-    hand.userData.lastPinchTime = now;
-  }
-
-  const tip = hand.joints['index-finger-tip'];
-  if (!tip) return;
-
-  raycaster.ray.origin.copy(tip.position);
-  raycaster.ray.direction.set(0,0,-1).applyQuaternion(tip.quaternion);
-
-  const hits = raycaster.intersectObjects(interactiveObjects);
-
-  interactiveObjects.forEach(o => o.scale.set(1,1,1));
-
-  if (hits.length > 0) {
-    const obj = hits[0].object;
-    obj.scale.set(1.2,1.2,1.2);
-
-    if (pinch && !hand.userData.isPinching) {
-      obj.userData.onClick();
-    }
-  }
-
-  hand.userData.isPinching = pinch;
-}
-
-function handleController(c){
-  tempMatrix.identity().extractRotation(c.matrixWorld);
-
-  raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
-  raycaster.ray.direction.set(0,0,-1).applyMatrix4(tempMatrix);
-
-  const hits = raycaster.intersectObjects(interactiveObjects);
-
-  if(hits.length>0){
-    const obj = hits[0].object;
-    obj.scale.set(1.2,1.2,1.2);
-
-    if(c.userData.selectPressed){
-      obj.userData.onClick();
-    }
-  }
-}
-
-function setupFolderInput(){
-  document.getElementById("folderInput").addEventListener("change",(e)=>{
-    const files = Array.from(e.target.files)
-      .filter(f => f.name.endsWith(".vr.jpg") || f.type.startsWith("image"));
-
-    createGallery(files);
-  });
-}
+---
 
 function createGallery(files){
   clearGallery();
 
   const r=2.5;
 
-  files.forEach(async (file,i)=>{
-    const angle = (-Math.PI/2)+(i*(Math.PI/files.length));
+  files.forEach(async(file,i)=>{
+    const angle=(-Math.PI/2)+(i*(Math.PI/files.length));
 
-    const tex = await createThumbnail(file);
+    const tex=await createThumbnail(file);
 
-    const mesh = new THREE.Mesh(
+    const mesh=new THREE.Mesh(
       new THREE.PlaneGeometry(0.6,0.4),
       new THREE.MeshBasicMaterial({map:tex})
     );
@@ -254,7 +218,7 @@ function createGallery(files){
     mesh.position.set(Math.sin(angle)*r,1.5,Math.cos(angle)*r);
     mesh.lookAt(0,1.5,0);
 
-    mesh.userData.onClick = () => loadImage(file);
+    mesh.userData.onClick=()=>loadImage(file);
 
     scene.add(mesh);
     interactiveObjects.push(mesh);
@@ -265,6 +229,8 @@ function clearGallery(){
   interactiveObjects.forEach(o=>scene.remove(o));
   interactiveObjects=[];
 }
+
+---
 
 async function createThumbnail(file){
   const img=new Image();
@@ -280,80 +246,53 @@ async function createThumbnail(file){
   return tex;
 }
 
-async function detectFormat(file) {
-  const text = await file.text();
-  if (text.includes("GDepth:Data")) return "cardboard";
-  return "unknown";
-}
-
-function loadImageDimensions(file) {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.src = URL.createObjectURL(file);
-    img.onload = () => resolve({ width: img.width, height: img.height, img });
-  });
-}
-
-function b64ToTex(b64,type){
-  return new Promise(res=>{
-    const img=new Image();
-    img.src=`data:${type};base64,${b64}`;
-    img.onload=()=>{
-      const t=new THREE.Texture(img);
-      t.needsUpdate=true;
-      res(t);
-    };
-  });
-}
+---
 
 async function loadImage(file){
-  document.getElementById("loading").style.display="block";
+  const img=new Image();
+  img.src=URL.createObjectURL(file);
+  await img.decode();
 
-  const format = await detectFormat(file);
+  const texture=new THREE.Texture(img);
+  texture.needsUpdate=true;
 
-  if (format === "cardboard") {
-    const txt = await file.text();
-    const xmp = txt.substring(txt.indexOf("<x:xmpmeta"), txt.indexOf("</x:xmpmeta>"));
+  const ratio=img.width/img.height;
 
-    const depth = xmp.match(/GDepth:Data="([^"]+)"/)[1];
-    const image = xmp.match(/GImage:Data="([^"]+)"/)[1];
-
-    const colorTex = await b64ToTex(image,"image/jpeg");
-    const depthTex = await b64ToTex(depth,"image/png");
-
-    panoMesh.visible = true;
-    sphereMesh.visible = false;
-
-    material.uniforms.map.value = colorTex;
-    material.uniforms.depthMap.value = depthTex;
-
-  } else {
-    const { width, height, img } = await loadImageDimensions(file);
-
-    const texture = new THREE.Texture(img);
-    texture.needsUpdate = true;
-
-    const ratio = width / height;
-
-    if (ratio > 1.9 && ratio < 2.1) {
-      sphereMesh.visible = true;
-      panoMesh.visible = false;
-      sphereMesh.material.map = texture;
-    } else {
-      panoMesh.visible = true;
-      sphereMesh.visible = false;
-      material.uniforms.map.value = texture;
-      material.uniforms.depthMap.value = texture;
-    }
+  if(ratio>1.9 && ratio<2.1){
+    sphereMesh.visible=true;
+    panoMesh.visible=false;
+    sphereMesh.material.map=texture;
+  }else{
+    panoMesh.visible=true;
+    sphereMesh.visible=false;
+    material.uniforms.map.value=texture;
+    material.uniforms.depthMap.value=texture;
   }
-
-  document.getElementById("loading").style.display="none";
 }
+
+---
 
 function animate(){
   renderer.setAnimationLoop(()=>{
     controllers.forEach(handleController);
-    hands.forEach(handleHand);
     renderer.render(scene,camera);
   });
+}
+
+function handleController(c){
+  tempMatrix.identity().extractRotation(c.matrixWorld);
+
+  raycaster.ray.origin.setFromMatrixPosition(c.matrixWorld);
+  raycaster.ray.direction.set(0,0,-1).applyMatrix4(tempMatrix);
+
+  const hits=raycaster.intersectObjects(interactiveObjects);
+
+  if(hits.length>0){
+    const obj=hits[0].object;
+    obj.scale.set(1.2,1.2,1.2);
+
+    if(c.userData.selectPressed){
+      obj.userData.onClick();
+    }
+  }
 }

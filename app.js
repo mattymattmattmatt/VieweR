@@ -4,16 +4,12 @@ import { XRHandModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.160/exa
 
 let scene, camera, renderer;
 let panoMesh, sphereMesh, material;
-
-let controllers = [];
-let hands = [];
-let interactiveObjects = [];
+let controllers = [], hands = [], interactiveObjects = [];
 
 let raycaster = new THREE.Raycaster();
 let tempMatrix = new THREE.Matrix4();
 
-let backButton;
-let backTimer = null;
+let backButton, backTimer = null;
 
 init();
 animate();
@@ -33,9 +29,29 @@ function init() {
   renderer.xr.enabled = true;
   renderer.xr.setReferenceSpaceType('local');
 
-  document.body.appendChild(VRButton.createButton(renderer, {
-    optionalFeatures: ['hand-tracking']
-  }));
+  // FIXED VR BUTTON
+  if (navigator.xr) {
+    const btn = VRButton.createButton(renderer, {
+      optionalFeatures: ['hand-tracking']
+    });
+
+    btn.style.position = "absolute";
+    btn.style.bottom = "20px";
+    btn.style.left = "50%";
+    btn.style.transform = "translateX(-50%)";
+    btn.style.zIndex = "999";
+
+    document.body.appendChild(btn);
+  }
+
+  // Hide UI in VR
+  renderer.xr.addEventListener("sessionstart", () => {
+    document.getElementById("ui").style.display = "none";
+  });
+
+  renderer.xr.addEventListener("sessionend", () => {
+    document.getElementById("ui").style.display = "block";
+  });
 
   createPanoMesh();
   createSphereMesh();
@@ -45,8 +61,6 @@ function init() {
   setupHands();
   setupFolderInput();
 }
-
----
 
 function createPanoMesh() {
   const geometry = new THREE.CylinderGeometry(5,5,3,128,64,true,-Math.PI/2,Math.PI);
@@ -73,7 +87,6 @@ function createPanoMesh() {
     fragmentShader: `
       varying vec2 vUv;
       uniform sampler2D map;
-
       void main() {
         gl_FragColor = texture2D(map, vUv);
       }
@@ -85,21 +98,15 @@ function createPanoMesh() {
   scene.add(panoMesh);
 }
 
----
-
 function createSphereMesh() {
   const geometry = new THREE.SphereGeometry(50, 64, 64);
   geometry.scale(-1, 1, 1);
 
-  const mat = new THREE.MeshBasicMaterial({ map: null });
-
-  sphereMesh = new THREE.Mesh(geometry, mat);
+  sphereMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
   sphereMesh.visible = false;
 
   scene.add(sphereMesh);
 }
-
----
 
 function createBackButton() {
   const geo = new THREE.PlaneGeometry(0.6, 0.25);
@@ -131,16 +138,13 @@ function showGallery() {
   backButton.visible = false;
 }
 
----
-
 function setupControllers() {
   for (let i=0;i<2;i++){
     const c = renderer.xr.getController(i);
-    c.userData.selectPressed = false;
 
     c.addEventListener('selectstart',()=>{
-      c.userData.selectPressed=true;
       showBackButton();
+      c.userData.selectPressed = true;
     });
 
     c.addEventListener('selectend',()=>c.userData.selectPressed=false);
@@ -149,8 +153,6 @@ function setupControllers() {
     controllers.push(c);
   }
 }
-
----
 
 function setupHands() {
   const factory = new XRHandModelFactory();
@@ -168,8 +170,6 @@ function setupHands() {
     hands.push(hand);
   }
 }
-
----
 
 function detectPinch(hand) {
   const i = hand.joints['index-finger-tip'];
@@ -209,8 +209,6 @@ function handleHand(hand) {
   hand.userData.isPinching = pinch;
 }
 
----
-
 function handleController(c){
   tempMatrix.identity().extractRotation(c.matrixWorld);
 
@@ -229,20 +227,14 @@ function handleController(c){
   }
 }
 
----
-
 function setupFolderInput(){
-  const input = document.getElementById("folderInput");
-
-  input.addEventListener("change",(e)=>{
+  document.getElementById("folderInput").addEventListener("change",(e)=>{
     const files = Array.from(e.target.files)
       .filter(f => f.name.endsWith(".vr.jpg") || f.type.startsWith("image"));
 
     createGallery(files);
   });
 }
-
----
 
 function createGallery(files){
   clearGallery();
@@ -274,8 +266,6 @@ function clearGallery(){
   interactiveObjects=[];
 }
 
----
-
 async function createThumbnail(file){
   const img=new Image();
   img.src=URL.createObjectURL(file);
@@ -283,15 +273,12 @@ async function createThumbnail(file){
 
   const c=document.createElement("canvas");
   c.width=256;c.height=128;
-
   c.getContext("2d").drawImage(img,0,0,c.width,c.height);
 
   const tex=new THREE.Texture(c);
   tex.needsUpdate=true;
   return tex;
 }
-
----
 
 async function detectFormat(file) {
   const text = await file.text();
@@ -303,14 +290,9 @@ function loadImageDimensions(file) {
   return new Promise((resolve) => {
     const img = new Image();
     img.src = URL.createObjectURL(file);
-
-    img.onload = () => {
-      resolve({ width: img.width, height: img.height, img });
-    };
+    img.onload = () => resolve({ width: img.width, height: img.height, img });
   });
 }
-
----
 
 function b64ToTex(b64,type){
   return new Promise(res=>{
@@ -323,8 +305,6 @@ function b64ToTex(b64,type){
     };
   });
 }
-
----
 
 async function loadImage(file){
   document.getElementById("loading").style.display="block";
@@ -358,14 +338,10 @@ async function loadImage(file){
     if (ratio > 1.9 && ratio < 2.1) {
       sphereMesh.visible = true;
       panoMesh.visible = false;
-
       sphereMesh.material.map = texture;
-      sphereMesh.material.needsUpdate = true;
-
     } else {
       panoMesh.visible = true;
       sphereMesh.visible = false;
-
       material.uniforms.map.value = texture;
       material.uniforms.depthMap.value = texture;
     }
@@ -373,8 +349,6 @@ async function loadImage(file){
 
   document.getElementById("loading").style.display="none";
 }
-
----
 
 function animate(){
   renderer.setAnimationLoop(()=>{

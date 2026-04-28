@@ -115,6 +115,7 @@ function setupFolderInput() {
   };
 
   folderInput.addEventListener('change', handleInputChange);
+  folderInput.addEventListener('input', handleInputChange);
   fileInput.addEventListener('change', handleInputChange);
 
   if (!('webkitdirectory' in folderInput)) {

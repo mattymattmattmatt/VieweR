@@ -12,6 +12,9 @@ let interactiveObjects = [];
 let raycaster = new THREE.Raycaster();
 let tempMatrix = new THREE.Matrix4();
 
+let backButton;
+let backTimer = null;
+
 init();
 animate();
 
@@ -36,6 +39,8 @@ function init() {
 
   createPanoMesh();
   createSphereMesh();
+  createBackButton();
+
   setupControllers();
   setupHands();
   setupFolderInput();
@@ -47,7 +52,6 @@ function createPanoMesh() {
   const geometry = new THREE.CylinderGeometry(5,5,3,128,64,true,-Math.PI/2,Math.PI);
 
   material = new THREE.ShaderMaterial({
-    transparent: true,
     uniforms: {
       map: { value: null },
       depthMap: { value: null },
@@ -97,12 +101,48 @@ function createSphereMesh() {
 
 ---
 
+function createBackButton() {
+  const geo = new THREE.PlaneGeometry(0.6, 0.25);
+  const mat = new THREE.MeshBasicMaterial({ color: 0x222222 });
+
+  backButton = new THREE.Mesh(geo, mat);
+  backButton.position.set(0, 1.2, -1);
+  backButton.visible = false;
+
+  backButton.userData.onClick = showGallery;
+
+  scene.add(backButton);
+  interactiveObjects.push(backButton);
+}
+
+function showBackButton() {
+  backButton.visible = true;
+
+  if (backTimer) clearTimeout(backTimer);
+
+  backTimer = setTimeout(() => {
+    backButton.visible = false;
+  }, 4000);
+}
+
+function showGallery() {
+  panoMesh.visible = false;
+  sphereMesh.visible = false;
+  backButton.visible = false;
+}
+
+---
+
 function setupControllers() {
   for (let i=0;i<2;i++){
     const c = renderer.xr.getController(i);
     c.userData.selectPressed = false;
 
-    c.addEventListener('selectstart',()=>c.userData.selectPressed=true);
+    c.addEventListener('selectstart',()=>{
+      c.userData.selectPressed=true;
+      showBackButton();
+    });
+
     c.addEventListener('selectend',()=>c.userData.selectPressed=false);
 
     scene.add(c);
@@ -142,6 +182,11 @@ function handleHand(hand) {
   const pinch = detectPinch(hand);
   const now = performance.now();
 
+  if (pinch && !hand.userData.isPinching && now - hand.userData.lastPinchTime > 400) {
+    showBackButton();
+    hand.userData.lastPinchTime = now;
+  }
+
   const tip = hand.joints['index-finger-tip'];
   if (!tip) return;
 
@@ -156,8 +201,7 @@ function handleHand(hand) {
     const obj = hits[0].object;
     obj.scale.set(1.2,1.2,1.2);
 
-    if (pinch && !hand.userData.isPinching && now - hand.userData.lastPinchTime > 400) {
-      hand.userData.lastPinchTime = now;
+    if (pinch && !hand.userData.isPinching) {
       obj.userData.onClick();
     }
   }

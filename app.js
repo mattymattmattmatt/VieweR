@@ -84,14 +84,39 @@ function setupEnterVrButton() {
 }
 
 function setupFolderInput() {
-  const resetValueOnClick = (event) => {
-    event.target.value = '';
+  const readFilesFromInput = async (input) => {
+    const retryDelays = [0, 50, 150, 300];
+    let files = [];
+
+    for (const delay of retryDelays) {
+      if (delay) {
+        // Some browsers populate input.files asynchronously after picker close.
+        // Waiting briefly avoids false "0 files loaded" states.
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+
+      files = Array.from(input.files || []);
+      if (files.length) {
+        return files;
+      }
+    }
+
+    return files;
   };
 
   const handleInputChange = async (event) => {
     loadingText.style.display = 'block';
 
-    const allFiles = Array.from(event.target.files || []);
+    const input = event.currentTarget;
+    const allFiles = await readFilesFromInput(input);
+    if (!allFiles.length) {
+      fileCount.textContent = '0 image files loaded. Browser did not provide readable files for this selection.';
+      enterVrButton.disabled = true;
+      enterVrButton.style.display = 'none';
+      loadingText.style.display = 'none';
+      return;
+    }
+
     loadedFiles = allFiles.filter(isImageFile);
     if (!loadedFiles.length && allFiles.length) {
       loadedFiles = allFiles;
@@ -110,10 +135,15 @@ function setupFolderInput() {
     loadingText.style.display = 'none';
   };
 
-  folderInput.addEventListener('click', resetValueOnClick);
-  fileInput.addEventListener('click', resetValueOnClick);
   folderInput.addEventListener('change', handleInputChange);
+  folderInput.addEventListener('input', handleInputChange);
   fileInput.addEventListener('change', handleInputChange);
+  fileInput.addEventListener('input', handleInputChange);
+
+  if (!('webkitdirectory' in folderInput)) {
+    folderInput.disabled = true;
+    folderInput.title = 'Folder selection is not supported in this browser.';
+  }
 }
 
 function isImageFile(file) {

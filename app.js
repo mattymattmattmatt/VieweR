@@ -84,11 +84,18 @@ function setupEnterVrButton() {
 }
 
 function setupFolderInput() {
+  const resetValueOnClick = (event) => {
+    event.target.value = '';
+  };
+
   const handleInputChange = async (event) => {
     loadingText.style.display = 'block';
 
     const allFiles = Array.from(event.target.files || []);
     loadedFiles = allFiles.filter(isImageFile);
+    if (!loadedFiles.length && allFiles.length) {
+      loadedFiles = allFiles;
+    }
 
     const count = loadedFiles.length;
     fileCount.textContent = `${count} image file${count === 1 ? '' : 's'} loaded`;
@@ -97,33 +104,16 @@ function setupFolderInput() {
     enterVrButton.style.display = count > 0 ? 'inline-flex' : 'none';
 
     if (!count) {
-      fileCount.textContent = '0 image files loaded. On Quest, use "Choose Image Files (Quest)".';
+      fileCount.textContent = '0 image files loaded. Browser returned no readable files.';
     }
 
     loadingText.style.display = 'none';
   };
 
+  folderInput.addEventListener('click', resetValueOnClick);
+  fileInput.addEventListener('click', resetValueOnClick);
   folderInput.addEventListener('change', handleInputChange);
   fileInput.addEventListener('change', handleInputChange);
-}
-
-function isImageFile(file) {
-  if (file.type && file.type.startsWith('image/')) {
-    return true;
-  }
-
-  const lowerName = file.name.toLowerCase();
-  return [
-    '.jpg',
-    '.jpeg',
-    '.png',
-    '.webp',
-    '.gif',
-    '.bmp',
-    '.avif',
-    '.heic',
-    '.heif'
-  ].some((ext) => lowerName.endsWith(ext));
 }
 
 function isImageFile(file) {

@@ -84,33 +84,12 @@ function setupEnterVrButton() {
 }
 
 function setupFolderInput() {
-  const readFilesFromInput = async (input) => {
-    const retryDelays = [0, 50, 150, 300];
-    let files = [];
-
-    for (const delay of retryDelays) {
-      if (delay) {
-        // Some browsers populate input.files asynchronously after picker close.
-        // Waiting briefly avoids false "0 files loaded" states.
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-
-      files = Array.from(input.files || []);
-      if (files.length) {
-        return files;
-      }
-    }
-
-    return files;
-  };
-
   const handleInputChange = async (event) => {
     loadingText.style.display = 'block';
 
-    const input = event.currentTarget;
-    const allFiles = await readFilesFromInput(input);
+    const allFiles = Array.from(event.target.files || []);
     if (!allFiles.length) {
-      fileCount.textContent = '0 image files loaded. Browser did not provide readable files for this selection.';
+      fileCount.textContent = '0 image files loaded. No files were returned by the browser picker.';
       enterVrButton.disabled = true;
       enterVrButton.style.display = 'none';
       loadingText.style.display = 'none';
@@ -138,7 +117,6 @@ function setupFolderInput() {
   folderInput.addEventListener('change', handleInputChange);
   folderInput.addEventListener('input', handleInputChange);
   fileInput.addEventListener('change', handleInputChange);
-  fileInput.addEventListener('input', handleInputChange);
 
   if (!('webkitdirectory' in folderInput)) {
     folderInput.disabled = true;

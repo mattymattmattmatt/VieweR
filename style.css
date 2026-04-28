@@ -1,0 +1,20 @@
+body {
+  margin: 0;
+  background: #000;
+  font-family: sans-serif;
+}
+
+#ui {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 10;
+  background: rgba(0,0,0,0.6);
+  padding: 10px;
+  border-radius: 10px;
+  color: white;
+}
+
+#loading {
+  display: none;
+}

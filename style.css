@@ -80,7 +80,8 @@ body {
   cursor: pointer;
 }
 
-#folderInput {
+#folderInput,
+#fileInput {
   position: absolute;
   width: 1px;
   height: 1px;

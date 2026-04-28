@@ -131,6 +131,7 @@ function isImageFile(file) {
 
   const lowerName = file.name.toLowerCase();
   return [
+    '.vr.jpg',
     '.jpg',
     '.jpeg',
     '.png',

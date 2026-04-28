@@ -7,14 +7,18 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div id="ui">
+    <h1>VR Depth Viewer</h1>
+    <p class="subtitle">Upload a folder with your images, then launch WebXR.</p>
+    <label class="file-input-label" for="folderInput">Choose Image Folder</label>
+    <input type="file" id="folderInput" webkitdirectory multiple />
+    <div id="loading">Loading files...</div>
+    <div id="fileCount">0 image files loaded</div>
+    <button id="enterVrButton" type="button" disabled>Enter VR Gallery</button>
+  </div>
 
-<div id="ui">
-  <input type="file" id="folderInput" webkitdirectory multiple />
-  <div id="loading">Loading...</div>
-</div>
+  <canvas id="xr-canvas"></canvas>
 
-<canvas id="xr-canvas"></canvas>
-
-<script type="module" src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

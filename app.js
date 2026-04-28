@@ -87,7 +87,7 @@ function setupFolderInput() {
     loadingText.style.display = 'block';
 
     const allFiles = Array.from(event.target.files || []);
-    loadedFiles = allFiles.filter((file) => file.type.startsWith('image/'));
+    loadedFiles = allFiles.filter(isImageFile);
 
     const count = loadedFiles.length;
     fileCount.textContent = `${count} image file${count === 1 ? '' : 's'} loaded`;
@@ -97,6 +97,25 @@ function setupFolderInput() {
 
     loadingText.style.display = 'none';
   });
+}
+
+function isImageFile(file) {
+  if (file.type && file.type.startsWith('image/')) {
+    return true;
+  }
+
+  const lowerName = file.name.toLowerCase();
+  return [
+    '.jpg',
+    '.jpeg',
+    '.png',
+    '.webp',
+    '.gif',
+    '.bmp',
+    '.avif',
+    '.heic',
+    '.heif'
+  ].some((ext) => lowerName.endsWith(ext));
 }
 
 function createPanoMesh() {

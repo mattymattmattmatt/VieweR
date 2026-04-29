@@ -11,6 +11,7 @@ let material;
 let backButton;
 let menuButton;
 let exitVrButton3D;
+let stereoSphereMaterial;
 
 let controllers = [];
 let hands = [];
@@ -177,7 +178,32 @@ function createPanoMesh() {
 function createSphereMesh() {
   const geometry = new THREE.SphereGeometry(50, 64, 64);
   geometry.scale(-1, 1, 1);
-  sphereMesh = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial());
+  stereoSphereMaterial = new THREE.ShaderMaterial({
+    uniforms: {
+      map: { value: null },
+      eyeIndex: { value: 0 },
+      stereoMode: { value: 0 }
+    },
+    vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `varying vec2 vUv; uniform sampler2D map; uniform float eyeIndex; uniform float stereoMode;
+    void main(){
+      vec2 uv = vUv;
+      if (stereoMode > 0.5) {
+        uv.x = (uv.x * 0.5) + (eyeIndex > 0.5 ? 0.5 : 0.0);
+      } else if (stereoMode < -0.5) {
+        uv.y = (uv.y * 0.5) + (eyeIndex > 0.5 ? 0.0 : 0.5);
+      }
+      gl_FragColor = texture2D(map, uv);
+    }`
+  });
+  sphereMesh = new THREE.Mesh(geometry, stereoSphereMaterial);
+  sphereMesh.onBeforeRender = (renderCtx, sceneCtx, activeCamera) => {
+    if (renderer.xr.isPresenting && activeCamera?.viewport) {
+      stereoSphereMaterial.uniforms.eyeIndex.value = activeCamera.viewport.x === 0 ? 0 : 1;
+      return;
+    }
+    stereoSphereMaterial.uniforms.eyeIndex.value = 0;
+  };
   sphereMesh.visible = false;
   scene.add(sphereMesh);
 }
@@ -191,21 +217,21 @@ function createTextButton(label, x, y, z) {
   ctx.fillStyle = '#ffffff'; ctx.font = 'bold 68px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(label, canvas.width / 2, canvas.height / 2);
   const texture = new THREE.CanvasTexture(canvas);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.2), new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.13), new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
   mesh.position.set(x, y, z);
   return mesh;
 }
 
 function createUiButtonsInVr() {
-  backButton = createTextButton('Back', -0.35, 1.15, -1);
+  backButton = createTextButton('Back', -0.5, 1.15, -1);
   backButton.visible = false;
   backButton.userData.onClick = showGallery;
 
   menuButton = createTextButton('Menu', 0, 1.15, -1);
   menuButton.visible = false;
-  menuButton.userData.onClick = toggleGalleryVisibility;
+  menuButton.userData.onClick = showGallery;
 
-  exitVrButton3D = createTextButton('Exit VR', 0.35, 1.15, -1);
+  exitVrButton3D = createTextButton('Exit VR', 0.5, 1.15, -1);
   exitVrButton3D.visible = false;
 
   [backButton, menuButton, exitVrButton3D].forEach((b) => {
@@ -305,10 +331,16 @@ async function loadImage(file) {
   const ratio = image.width / image.height;
   const isCardboard = file.name?.toLowerCase().endsWith('.vr.jpg');
 
-  if (isCardboard || (ratio > 1.9 && ratio < 2.1)) {
+  if (isCardboard || ratio >= 3.8) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
-    sphereMesh.material.map = texture;
+    stereoSphereMaterial.uniforms.map.value = texture;
+    stereoSphereMaterial.uniforms.stereoMode.value = ratio >= 3.8 ? 1 : 0;
+  } else if (ratio > 1.9 && ratio < 2.1) {
+    sphereMesh.visible = true;
+    panoMesh.visible = false;
+    stereoSphereMaterial.uniforms.map.value = texture;
+    stereoSphereMaterial.uniforms.stereoMode.value = 0;
   } else {
     panoMesh.visible = true;
     sphereMesh.visible = false;

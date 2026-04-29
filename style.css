@@ -63,7 +63,8 @@ body {
 }
 
 .picker-input,
-#enterVrButton {
+#enterVrButton,
+#demoPicturesButton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -107,12 +108,23 @@ body {
   transition: transform 120ms ease, opacity 120ms ease;
 }
 
+#demoPicturesButton {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  cursor: pointer;
+}
+
 #enterVrButton:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
 #enterVrButton:not(:disabled):hover {
+  transform: translateY(-1px);
+}
+
+#demoPicturesButton:hover {
   transform: translateY(-1px);
 }
 

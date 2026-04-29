@@ -16,6 +16,17 @@ let hands = [];
 let interactiveObjects = [];
 let loadedFiles = [];
 
+const demoImages = [
+  {
+    name: 'Test 3D360PANO.jpg',
+    url: 'Demo Images/Test 3D360PANO.vr.jpg'
+  },
+  {
+    name: 'Test 360SPHERE.jpg',
+    url: 'Demo Images/Test 360SPHERE.jpg'
+  }
+];
+
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
 
@@ -24,6 +35,7 @@ const fileInput = document.getElementById('fileInput');
 const loadingText = document.getElementById('loading');
 const fileCount = document.getElementById('fileCount');
 const enterVrButton = document.getElementById('enterVrButton');
+const demoPicturesButton = document.getElementById('demoPicturesButton');
 const uiCard = document.getElementById('ui');
 
 init();
@@ -50,6 +62,7 @@ function init() {
   setupControllers();
   setupHands();
   setupFolderInput();
+  setupDemoPicturesButton();
   setupEnterVrButton();
 
   window.addEventListener('resize', onWindowResize);
@@ -122,6 +135,16 @@ function setupFolderInput() {
     folderInput.disabled = true;
     folderInput.title = 'Folder selection is not supported in this browser.';
   }
+}
+
+function setupDemoPicturesButton() {
+  demoPicturesButton.addEventListener('click', () => {
+    loadedFiles = demoImages;
+    const count = loadedFiles.length;
+    fileCount.textContent = `${count} demo image${count === 1 ? '' : 's'} loaded`;
+    enterVrButton.disabled = false;
+    enterVrButton.style.display = 'inline-flex';
+  });
 }
 
 function isImageFile(file) {
@@ -286,10 +309,16 @@ function clearGallery() {
   interactiveObjects = [backButton];
 }
 
-async function createThumbnail(file) {
+async function loadImageElement(file) {
   const image = new Image();
-  image.src = URL.createObjectURL(file);
+  const source = file.url || URL.createObjectURL(file);
+  image.src = source;
   await image.decode();
+  return { image, source, shouldRevoke: !file.url };
+}
+
+async function createThumbnail(file) {
+  const { image, source, shouldRevoke } = await loadImageElement(file);
 
   const canvas = document.createElement('canvas');
   canvas.width = 256;
@@ -298,14 +327,16 @@ async function createThumbnail(file) {
 
   const texture = new THREE.Texture(canvas);
   texture.needsUpdate = true;
-  URL.revokeObjectURL(image.src);
+
+  if (shouldRevoke) {
+    URL.revokeObjectURL(source);
+  }
+
   return texture;
 }
 
 async function loadImage(file) {
-  const image = new Image();
-  image.src = URL.createObjectURL(file);
-  await image.decode();
+  const { image, source, shouldRevoke } = await loadImageElement(file);
 
   const texture = new THREE.Texture(image);
   texture.needsUpdate = true;
@@ -323,7 +354,9 @@ async function loadImage(file) {
     material.uniforms.depthMap.value = texture;
   }
 
-  URL.revokeObjectURL(image.src);
+  if (shouldRevoke) {
+    URL.revokeObjectURL(source);
+  }
 }
 
 function animate() {

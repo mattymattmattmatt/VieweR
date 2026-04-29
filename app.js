@@ -19,7 +19,7 @@ let loadedFiles = [];
 const demoImages = [
   {
     name: 'Test 3D360PANO.jpg',
-    url: 'Demo Images/Test 3D360PANO.jpg'
+    url: 'Demo Images/Test 3D360PANO.vr.jpg'
   },
   {
     name: 'Test 360SPHERE.jpg',

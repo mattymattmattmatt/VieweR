@@ -7,127 +7,22 @@
   --muted: #a6b1cf;
   --accent: #4f8cff;
 }
-
-* {
-  box-sizing: border-box;
-}
-
-body {
-  margin: 0;
-  background: radial-gradient(circle at top, #16203b 0%, var(--bg) 45%);
-  color: var(--text);
-  font-family: Inter, Segoe UI, Roboto, Arial, sans-serif;
-  min-height: 100vh;
-}
-
-#xr-canvas {
-  width: 100vw;
-  height: 100vh;
-  display: block;
-}
-
-#ui {
-  position: fixed;
-  inset: 0;
-  z-index: 10;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  margin: auto;
-  width: min(92vw, 480px);
-  height: fit-content;
-  padding: 28px 24px;
-  border-radius: 18px;
-  border: 1px solid var(--border);
-  background: var(--card-bg);
-  backdrop-filter: blur(14px);
-  text-align: center;
-  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
-}
-
-#ui.hidden {
-  display: none;
-}
-
-#ui h1 {
-  margin: 0;
-  font-size: 1.4rem;
-}
-
-.subtitle {
-  margin: 0 0 8px;
-  color: var(--muted);
-  font-size: 0.95rem;
-}
-
-.picker-input,
-#enterVrButton,
-#demoPicturesButton {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 44px;
-  width: 100%;
-  border-radius: 10px;
-  font-weight: 600;
-}
-
-.picker-title {
-  align-self: flex-start;
-  font-size: 0.9rem;
-  color: var(--muted);
-  margin-top: 4px;
-}
-
-.picker-input {
-  width: 100%;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text);
-}
-
-#loading,
-#fileCount {
-  color: var(--muted);
-  font-size: 0.92rem;
-}
-
-#loading {
-  display: none;
-}
-
-#enterVrButton {
-  border: none;
-  background: linear-gradient(135deg, #3c7cff, var(--accent));
-  color: #ffffff;
-  cursor: pointer;
-  transition: transform 120ms ease, opacity 120ms ease;
-}
-
-#demoPicturesButton {
-  border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--text);
-  cursor: pointer;
-}
-
-#enterVrButton:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-#enterVrButton:not(:disabled):hover {
-  transform: translateY(-1px);
-}
-
-#demoPicturesButton:hover {
-  transform: translateY(-1px);
-}
-
-.native-vr-button {
-  display: none !important;
-}
+* { box-sizing: border-box; }
+body { margin: 0; background: radial-gradient(circle at top, #16203b 0%, var(--bg) 45%); color: var(--text); font-family: Inter, Segoe UI, Roboto, Arial, sans-serif; min-height: 100vh; }
+#xr-canvas { width: 100vw; height: 100vh; display: block; }
+#ui { position: fixed; inset: 0; z-index: 10; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; margin: auto; width: min(92vw, 520px); height: fit-content; padding: 28px 24px; border-radius: 18px; border: 1px solid var(--border); background: var(--card-bg); backdrop-filter: blur(14px); text-align: center; box-shadow: 0 18px 44px rgba(0,0,0,.45); }
+#ui.hidden { display:none; }
+#ui h1 { margin:0; font-size:1.4rem; }
+.subtitle { margin:0 0 8px; color:var(--muted); font-size:.95rem; }
+.picker-input,#enterVrButton,#demoPicturesButton,#clearFilesButton { display:inline-flex; align-items:center; justify-content:center; min-height:44px; width:100%; border-radius:10px; font-weight:600; }
+.picker-title { align-self:flex-start; font-size:.9rem; color:var(--muted); margin-top:4px; }
+.picker-input { border:1px solid var(--border); padding:10px; background:rgba(255,255,255,.04); color:var(--text); }
+#loading,#fileCount { color:var(--muted); font-size:.92rem; }
+#loading { display:none; }
+#enterVrButton { border:none; background:linear-gradient(135deg,#3c7cff,var(--accent)); color:#fff; cursor:pointer; transition:transform 120ms ease, opacity 120ms ease; }
+.button-row { display:grid; width:100%; grid-template-columns:1fr 1fr; gap:8px; }
+#demoPicturesButton,#clearFilesButton { border:1px solid var(--border); background:rgba(255,255,255,.08); color:var(--text); cursor:pointer; }
+#clearFilesButton { background:rgba(255, 120, 120, 0.15); }
+#enterVrButton:disabled { opacity:.5; cursor:not-allowed; }
+#enterVrButton:not(:disabled):hover,#demoPicturesButton:hover,#clearFilesButton:hover { transform:translateY(-1px); }
+.native-vr-button { display:none !important; }

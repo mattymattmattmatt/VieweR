@@ -22,6 +22,7 @@ let activeObjectUrl = null;
 let vrUiVisible = false;
 let galleryBuildId = 0;
 let immersiveVrSupported = null;
+let menuButtonLatch = false;
 
 const demoImages = [
   { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
@@ -297,6 +298,15 @@ function showGallery() {
   if (vrUiVisible) showVrUi();
 }
 
+function exitToUploadScreen() {
+  const session = renderer.xr.getSession();
+  if (session) {
+    session.end();
+    return;
+  }
+  uiCard.classList.remove('hidden');
+}
+
 function setupControllers() {
   for (let i = 0; i < 2; i += 1) {
     const controller = renderer.xr.getController(i);
@@ -314,12 +324,6 @@ function setupControllers() {
     controller.add(pointer);
     controller.userData.index = i;
     controller.userData.menuPressed = false;
-    controller.addEventListener('squeezestart', () => {
-      if (controller.userData.handedness === 'left') {
-        vrUiVisible = !vrUiVisible;
-        if (vrUiVisible) showVrUi(); else hideVrUi();
-      }
-    });
     scene.add(controller);
     controllers.push(controller);
   }
@@ -439,7 +443,8 @@ async function loadImage(file) {
 async function extractCardboardRightEye(file) {
   try {
     const text = new TextDecoder('latin1').decode(await file.arrayBuffer());
-    const match = text.match(/GImage:Data=\"([A-Za-z0-9+/=\s&#10;]+)\"/);
+    const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=\s&#10;]+)["']/)
+      || text.match(/<GImage:Data>([A-Za-z0-9+/=\s&#10;]+)<\/GImage:Data>/);
     if (!match) return null;
     const base64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
     const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
@@ -475,16 +480,16 @@ function handleController(controller) {
   if (renderer.xr.isPresenting) {
     const session = renderer.xr.getSession();
     const source = session?.inputSources?.[controller.userData.index];
-    const pressed = Boolean(
-      source?.gamepad?.buttons?.[4]?.pressed
-      || source?.gamepad?.buttons?.[5]?.pressed
-      || source?.gamepad?.buttons?.[1]?.pressed
-    );
-    if (source?.handedness === 'left' && pressed && !controller.userData.menuPressed) {
-      vrUiVisible = !vrUiVisible;
-      if (vrUiVisible) showVrUi(); else hideVrUi();
+    const menuPressed = Boolean(source?.handedness === 'left' && source?.gamepad?.buttons?.[4]?.pressed);
+    if (menuPressed && !menuButtonLatch) {
+      if (panoMesh.visible || sphereMesh.visible) {
+        exitToUploadScreen();
+      } else {
+        vrUiVisible = !vrUiVisible;
+        if (vrUiVisible) showVrUi(); else hideVrUi();
+      }
     }
-    controller.userData.menuPressed = pressed;
+    menuButtonLatch = menuPressed;
   }
   tempMatrix.identity().extractRotation(controller.matrixWorld);
   raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);

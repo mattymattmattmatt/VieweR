@@ -25,6 +25,7 @@ let galleryBuildId = 0;
 let immersiveVrSupported = null;
 let menuButtonLatch = false;
 let snapTurnLatch = false;
+let imagePointerVisible = true;
 const SNAP_TURN_ANGLE = THREE.MathUtils.degToRad(30);
 const SNAP_TURN_THRESHOLD = 0.65;
 
@@ -350,13 +351,22 @@ function showGallery() {
   panoMesh.visible = false;
   sphereMesh.visible = false;
   galleryVisible = true;
+  imagePointerVisible = true;
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = true;
   });
-  if (vrUiVisible) showVrUi();
+  if (vrUiVisible) {
+    showVrUi();
+    controllerPointers.forEach((pointer) => { pointer.visible = true; });
+  }
 }
 
 function exitToUploadScreen() {
+  if (!galleryVisible) {
+    imagePointerVisible = !imagePointerVisible;
+    controllerPointers.forEach((pointer) => { pointer.visible = imagePointerVisible; });
+    return;
+  }
   const session = renderer.xr.getSession();
   if (session) {
     session.end();
@@ -489,6 +499,8 @@ async function loadImage(file) {
   }
 
   galleryVisible = false;
+  imagePointerVisible = true;
+  controllerPointers.forEach((pointer) => { pointer.visible = true; });
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = false;
   });

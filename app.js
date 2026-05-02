@@ -37,7 +37,6 @@ const demoImages = [
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
 
-const folderInput = document.getElementById('folderInput');
 const fileInput = document.getElementById('fileInput');
 const loadingText = document.getElementById('loading');
 const fileCount = document.getElementById('fileCount');
@@ -83,8 +82,8 @@ function setupEnterVrButton() {
 
   renderer.xr.addEventListener('sessionstart', () => {
     uiCard.classList.add('hidden');
-    vrUiVisible = true;
-    showVrUi();
+    vrUiVisible = false;
+    hideVrUi();
     showGallery();
   });
 
@@ -154,8 +153,6 @@ function setupInputs() {
     event.target.value = '';
   };
 
-  folderInput.addEventListener('change', handleInputChange);
-  folderInput.addEventListener('input', handleInputChange);
   fileInput.addEventListener('change', handleInputChange);
 
   // Some XR browsers support directory picking even if this property check fails.
@@ -355,10 +352,8 @@ function showGallery() {
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = true;
   });
-  if (vrUiVisible) {
-    showVrUi();
-    controllerPointers.forEach((pointer) => { pointer.visible = true; });
-  }
+  [backButton, menuButton].forEach((b) => { b.visible = false; });
+  controllerPointers.forEach((pointer) => { pointer.visible = true; });
 }
 
 function exitToUploadScreen() {
@@ -478,13 +473,14 @@ async function loadImage(file) {
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
   if (isCardboard) {
-    panoMesh.visible = false;
-    sphereMesh.visible = true;
+    panoMesh.visible = true;
+    sphereMesh.visible = false;
     const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
     imageTexture.needsUpdate = true;
     imageTexture.colorSpace = THREE.SRGBColorSpace;
-    stereoSphereMaterial.uniforms.map.value = imageTexture;
-    stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+    panoMaterial.uniforms.map.value = imageTexture;
+    panoMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+    panoMesh.scale.y = 1;
   } else if (isEquirect) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
@@ -499,8 +495,8 @@ async function loadImage(file) {
   }
 
   galleryVisible = false;
-  imagePointerVisible = true;
-  controllerPointers.forEach((pointer) => { pointer.visible = true; });
+  imagePointerVisible = false;
+  controllerPointers.forEach((pointer) => { pointer.visible = false; });
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = false;
   });
@@ -557,8 +553,14 @@ function handleXrInput() {
 
   const menuPressed = Boolean(leftSource?.gamepad?.buttons?.[4]?.pressed);
   if (menuPressed && !menuButtonLatch) {
-    vrUiVisible = !vrUiVisible;
-    if (vrUiVisible) showVrUi(); else hideVrUi();
+    if (galleryVisible) {
+      vrUiVisible = false;
+      [backButton, menuButton].forEach((b) => { b.visible = false; });
+      controllerPointers.forEach((pointer) => { pointer.visible = true; });
+    } else {
+      vrUiVisible = !vrUiVisible;
+      if (vrUiVisible) showVrUi(); else hideVrUi();
+    }
   }
   menuButtonLatch = menuPressed;
 

@@ -496,7 +496,19 @@ async function loadImage(file) {
     if (obj.userData.isThumb) obj.visible = false;
   });
 
-  if (shouldRevoke) URL.revokeObjectURL(source);
+    galleryVisible = false;
+    imagePointerVisible = false;
+    controllerPointers.forEach((pointer) => { pointer.visible = false; });
+    interactiveObjects.forEach((obj) => {
+      if (obj.userData.isThumb) obj.visible = false;
+    });
+  } catch (error) {
+    console.error('Failed to load selected image:', error);
+    fileCount.textContent = `Failed to open image: ${file?.name || 'unknown file'}`;
+    showGallery();
+  } finally {
+    if (shouldRevoke && source) URL.revokeObjectURL(source);
+  }
 }
 
 async function extractCardboardRightEye(file) {
@@ -548,7 +560,8 @@ function handleXrInput() {
   const leftSource = inputSources.find((source) => source?.handedness === 'left');
   const rightSource = inputSources.find((source) => source?.handedness === 'right');
 
-  const menuPressed = Boolean(leftSource?.gamepad?.buttons?.[4]?.pressed);
+  const leftButtons = leftSource?.gamepad?.buttons || [];
+  const menuPressed = Boolean(leftButtons[4]?.pressed || leftButtons[5]?.pressed || leftButtons[3]?.pressed);
   if (menuPressed && !menuButtonLatch) {
     vrUiVisible = !vrUiVisible;
     if (vrUiVisible) {

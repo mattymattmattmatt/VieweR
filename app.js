@@ -549,13 +549,18 @@ function handleXrInput() {
 
   const menuPressed = Boolean(leftSource?.gamepad?.buttons?.[4]?.pressed);
   if (menuPressed && !menuButtonLatch) {
-    if (galleryVisible) {
-      vrUiVisible = false;
-      [backButton, menuButton].forEach((b) => { b.visible = false; });
-      controllerPointers.forEach((pointer) => { pointer.visible = true; });
+    vrUiVisible = !vrUiVisible;
+    if (vrUiVisible) {
+      showVrUi();
+      if (galleryVisible) {
+        [backButton, menuButton].forEach((b) => { b.visible = false; });
+        controllerPointers.forEach((pointer) => { pointer.visible = true; });
+      }
     } else {
-      vrUiVisible = !vrUiVisible;
-      if (vrUiVisible) showVrUi(); else hideVrUi();
+      hideVrUi();
+      if (galleryVisible) {
+        controllerPointers.forEach((pointer) => { pointer.visible = true; });
+      }
     }
   }
   menuButtonLatch = menuPressed;

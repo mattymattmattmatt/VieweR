@@ -478,15 +478,13 @@ async function loadImage(file) {
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
   if (isCardboard) {
-    panoMesh.visible = true;
-    sphereMesh.visible = false;
+    panoMesh.visible = false;
+    sphereMesh.visible = true;
     const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
     imageTexture.needsUpdate = true;
     imageTexture.colorSpace = THREE.SRGBColorSpace;
-    panoMaterial.uniforms.map.value = imageTexture;
-    panoMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
-    const circumference = 2 * Math.PI * 5;
-    panoMesh.scale.y = Math.max(0.6, circumference / image.width * image.height / 3);
+    stereoSphereMaterial.uniforms.map.value = imageTexture;
+    stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
   } else if (isEquirect) {
     sphereMesh.visible = true;
     panoMesh.visible = false;

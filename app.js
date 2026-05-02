@@ -18,6 +18,7 @@ let hands = [];
 let interactiveObjects = [];
 let loadedFiles = [];
 let galleryVisible = true;
+let activeObjectUrl = null;
 
 const demoImages = [
   { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
@@ -229,7 +230,10 @@ function createUiButtonsInVr() {
 
   menuButton = createTextButton('Menu', 0, 1.15, -1);
   menuButton.visible = false;
-  menuButton.userData.onClick = showGallery;
+  menuButton.userData.onClick = () => {
+    const session = renderer.xr.getSession();
+    if (session) session.end();
+  };
 
   exitVrButton3D = createTextButton('Exit VR', 0.5, 1.15, -1);
   exitVrButton3D.visible = false;
@@ -268,6 +272,11 @@ function setupControllers() {
       controller.userData.selectPressed = true;
     });
     controller.addEventListener('selectend', () => { controller.userData.selectPressed = false; });
+    const pointer = new THREE.Line(
+      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -3)]),
+      new THREE.LineBasicMaterial({ color: 0x8fb0ff })
+    );
+    controller.add(pointer);
     scene.add(controller);
     controllers.push(controller);
   }
@@ -287,10 +296,16 @@ function createGallery(files) {
   clearGallery();
   const radius = 2.5;
   files.forEach(async (file, index) => {
-    const angle = (-Math.PI / 2) + (index * (Math.PI / Math.max(files.length, 2)));
+    const n = Math.max(files.length, 1);
+    const phi = Math.acos(1 - (2 * (index + 0.5) / n));
+    const theta = Math.PI * (1 + Math.sqrt(5)) * (index + 0.5);
     const texture = await createThumbnail(file);
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4), new THREE.MeshBasicMaterial({ map: texture }));
-    mesh.position.set(Math.sin(angle) * radius, 1.5, Math.cos(angle) * radius);
+    mesh.position.set(
+      Math.cos(theta) * Math.sin(phi) * radius,
+      1.5 + (Math.cos(phi) * radius * 0.55),
+      Math.sin(theta) * Math.sin(phi) * radius
+    );
     mesh.lookAt(0, 1.5, 0);
     mesh.userData.onClick = () => loadImage(file);
     mesh.userData.isThumb = true;
@@ -327,15 +342,26 @@ async function createThumbnail(file) {
 
 async function loadImage(file) {
   const { image, source, shouldRevoke } = await loadImageElement(file);
+  const rightEyeImage = file.name?.toLowerCase().endsWith('.vr.jpg') ? await extractCardboardRightEye(file) : null;
   const texture = new THREE.Texture(image); texture.needsUpdate = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
   const ratio = image.width / image.height;
   const isCardboard = file.name?.toLowerCase().endsWith('.vr.jpg');
 
-  if (isCardboard || ratio >= 3.8) {
+  if ((isCardboard && rightEyeImage) || ratio >= 3.8) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
-    stereoSphereMaterial.uniforms.map.value = texture;
-    stereoSphereMaterial.uniforms.stereoMode.value = ratio >= 3.8 ? 1 : 0;
+    if (isCardboard && rightEyeImage) {
+      const stacked = stackStereoTopBottom(image, rightEyeImage);
+      const stackedTexture = new THREE.Texture(stacked);
+      stackedTexture.needsUpdate = true;
+      stackedTexture.colorSpace = THREE.SRGBColorSpace;
+      stereoSphereMaterial.uniforms.map.value = stackedTexture;
+      stereoSphereMaterial.uniforms.stereoMode.value = -1;
+    } else {
+      stereoSphereMaterial.uniforms.map.value = texture;
+      stereoSphereMaterial.uniforms.stereoMode.value = 1;
+    }
   } else if (ratio > 1.9 && ratio < 2.1) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
@@ -354,6 +380,34 @@ async function loadImage(file) {
   });
 
   if (shouldRevoke) URL.revokeObjectURL(source);
+}
+
+async function extractCardboardRightEye(file) {
+  try {
+    const text = new TextDecoder().decode(await file.arrayBuffer());
+    const match = text.match(/GImage:Data=\"([^\"]+)\"/);
+    if (!match) return null;
+    const base64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
+    const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
+    if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
+    activeObjectUrl = URL.createObjectURL(blob);
+    const right = new Image();
+    right.src = activeObjectUrl;
+    await right.decode();
+    return right;
+  } catch {
+    return null;
+  }
+}
+
+function stackStereoTopBottom(leftImage, rightImage) {
+  const canvas = document.createElement('canvas');
+  canvas.width = leftImage.width;
+  canvas.height = leftImage.height * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(leftImage, 0, 0, canvas.width, leftImage.height);
+  ctx.drawImage(rightImage, 0, leftImage.height, canvas.width, leftImage.height);
+  return canvas;
 }
 
 function animate() {

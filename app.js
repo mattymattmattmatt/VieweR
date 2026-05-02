@@ -21,6 +21,7 @@ let galleryVisible = true;
 let activeObjectUrl = null;
 let vrUiVisible = false;
 let galleryBuildId = 0;
+let immersiveVrSupported = false;
 
 const demoImages = [
   { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
@@ -62,6 +63,7 @@ function init() {
   setupDemoPicturesButton();
   setupClearButton();
   setupEnterVrButton();
+  detectVrSupport();
 
   window.addEventListener('resize', onWindowResize);
 }
@@ -91,12 +93,23 @@ function setupEnterVrButton() {
   };
 }
 
-async function startVrSession() {
+async function detectVrSupport() {
   if (!navigator.xr) return;
-  const supported = await navigator.xr.isSessionSupported('immersive-vr');
-  if (!supported) return;
-  const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
-  renderer.xr.setSession(session);
+  try {
+    immersiveVrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+  } catch {
+    immersiveVrSupported = false;
+  }
+}
+
+async function startVrSession() {
+  if (!navigator.xr || !immersiveVrSupported) return;
+  try {
+    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
+    renderer.xr.setSession(session);
+  } catch (error) {
+    console.error('Failed to start VR session:', error);
+  }
 }
 
 function setupInputs() {

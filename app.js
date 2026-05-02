@@ -19,6 +19,7 @@ let interactiveObjects = [];
 let loadedFiles = [];
 let galleryVisible = true;
 let activeObjectUrl = null;
+let vrUiVisible = false;
 
 const demoImages = [
   { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
@@ -65,16 +66,10 @@ function init() {
 }
 
 function setupEnterVrButton() {
-  const vrButton = VRButton.createButton(renderer, { optionalFeatures: ['hand-tracking'] });
-  vrButton.id = 'nativeVrButton';
-  vrButton.classList.add('native-vr-button');
-  vrButton.style.display = 'none';
-  document.body.appendChild(vrButton);
-
   enterVrButton.addEventListener('click', () => {
     if (!loadedFiles.length) return;
     createGallery(loadedFiles);
-    vrButton.click();
+    startVrSession();
   });
 
   renderer.xr.addEventListener('sessionstart', () => {
@@ -93,6 +88,14 @@ function setupEnterVrButton() {
     const session = renderer.xr.getSession();
     if (session) session.end();
   };
+}
+
+async function startVrSession() {
+  if (!navigator.xr) return;
+  const supported = await navigator.xr.isSessionSupported('immersive-vr');
+  if (!supported) return;
+  const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
+  renderer.xr.setSession(session);
 }
 
 function setupInputs() {
@@ -266,6 +269,9 @@ function showGallery() {
 function setupControllers() {
   for (let i = 0; i < 2; i += 1) {
     const controller = renderer.xr.getController(i);
+    controller.addEventListener('connected', (event) => {
+      controller.userData.handedness = event.data?.handedness;
+    });
     controller.addEventListener('selectstart', () => {
       controller.userData.selectPressed = true;
     });
@@ -275,6 +281,14 @@ function setupControllers() {
       new THREE.LineBasicMaterial({ color: 0x8fb0ff })
     );
     controller.add(pointer);
+    controller.userData.index = i;
+    controller.userData.menuPressed = false;
+    controller.addEventListener('squeezestart', () => {
+      if (controller.userData.handedness === 'left') {
+        vrUiVisible = !vrUiVisible;
+        if (vrUiVisible) showVrUi(); else hideVrUi();
+      }
+    });
     scene.add(controller);
     controllers.push(controller);
   }
@@ -350,12 +364,12 @@ async function loadImage(file) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
     if (isCardboard && rightEyeImage) {
-      const stacked = stackStereoTopBottom(image, rightEyeImage);
+      const stacked = stackStereoSideBySide(image, rightEyeImage);
       const stackedTexture = new THREE.Texture(stacked);
       stackedTexture.needsUpdate = true;
       stackedTexture.colorSpace = THREE.SRGBColorSpace;
       stereoSphereMaterial.uniforms.map.value = stackedTexture;
-      stereoSphereMaterial.uniforms.stereoMode.value = -1;
+      stereoSphereMaterial.uniforms.stereoMode.value = 1;
     } else {
       stereoSphereMaterial.uniforms.map.value = texture;
       stereoSphereMaterial.uniforms.stereoMode.value = 1;
@@ -382,8 +396,8 @@ async function loadImage(file) {
 
 async function extractCardboardRightEye(file) {
   try {
-    const text = new TextDecoder().decode(await file.arrayBuffer());
-    const match = text.match(/GImage:Data=\"([^\"]+)\"/);
+    const text = new TextDecoder('latin1').decode(await file.arrayBuffer());
+    const match = text.match(/GImage:Data=\"([A-Za-z0-9+/=\s&#10;]+)\"/);
     if (!match) return null;
     const base64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
     const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
@@ -398,13 +412,13 @@ async function extractCardboardRightEye(file) {
   }
 }
 
-function stackStereoTopBottom(leftImage, rightImage) {
+function stackStereoSideBySide(leftImage, rightImage) {
   const canvas = document.createElement('canvas');
-  canvas.width = leftImage.width;
-  canvas.height = leftImage.height * 2;
+  canvas.width = leftImage.width * 2;
+  canvas.height = leftImage.height;
   const ctx = canvas.getContext('2d');
-  ctx.drawImage(leftImage, 0, 0, canvas.width, leftImage.height);
-  ctx.drawImage(rightImage, 0, leftImage.height, canvas.width, leftImage.height);
+  ctx.drawImage(leftImage, 0, 0, leftImage.width, leftImage.height);
+  ctx.drawImage(rightImage, leftImage.width, 0, leftImage.width, leftImage.height);
   return canvas;
 }
 
@@ -419,7 +433,11 @@ function handleController(controller) {
   if (renderer.xr.isPresenting) {
     const session = renderer.xr.getSession();
     const source = session?.inputSources?.[controller.userData.index];
-    const pressed = !!source?.gamepad?.buttons?.[4]?.pressed;
+    const pressed = Boolean(
+      source?.gamepad?.buttons?.[4]?.pressed
+      || source?.gamepad?.buttons?.[5]?.pressed
+      || source?.gamepad?.buttons?.[1]?.pressed
+    );
     if (source?.handedness === 'left' && pressed && !controller.userData.menuPressed) {
       vrUiVisible = !vrUiVisible;
       if (vrUiVisible) showVrUi(); else hideVrUi();

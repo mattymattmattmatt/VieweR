@@ -7,11 +7,12 @@ let camera;
 let renderer;
 let panoMesh;
 let sphereMesh;
-let material;
+let panoMaterial;
 let backButton;
 let menuButton;
 let exitVrButton3D;
 let stereoSphereMaterial;
+let panoStereoMode = 0;
 
 let controllers = [];
 let hands = [];
@@ -202,13 +203,29 @@ function isImageFile(file) {
 
 function createPanoMesh() {
   const geometry = new THREE.CylinderGeometry(5, 5, 3, 128, 64, true, -Math.PI / 2, Math.PI);
-  material = new THREE.ShaderMaterial({
-    uniforms: { map: { value: null }, depthMap: { value: null }, depthScale: { value: 0.2 } },
-    vertexShader: `varying vec2 vUv; uniform sampler2D depthMap; uniform float depthScale; void main(){vUv=uv; float d=texture2D(depthMap,uv).r; d=smoothstep(0.25,0.75,d); vec3 displaced=position+normal*d*depthScale; gl_Position=projectionMatrix*modelViewMatrix*vec4(displaced,1.0);}`,
-    fragmentShader: `varying vec2 vUv; uniform sampler2D map; void main(){gl_FragColor=texture2D(map,vUv);}`
+  panoMaterial = new THREE.ShaderMaterial({
+    uniforms: { map: { value: null }, eyeIndex: { value: 0 }, stereoMode: { value: 0 } },
+    vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
+    fragmentShader: `varying vec2 vUv; uniform sampler2D map; uniform float eyeIndex; uniform float stereoMode;
+    void main(){
+      vec2 uv = vUv;
+      if (stereoMode > 0.5) {
+        uv.x = (uv.x * 0.5) + (eyeIndex > 0.5 ? 0.5 : 0.0);
+      } else if (stereoMode < -0.5) {
+        uv.y = (uv.y * 0.5) + (eyeIndex > 0.5 ? 0.0 : 0.5);
+      }
+      gl_FragColor = texture2D(map, uv);
+    }`
   });
-  panoMesh = new THREE.Mesh(geometry, material);
+  panoMesh = new THREE.Mesh(geometry, panoMaterial);
   panoMesh.scale.x = -1;
+  panoMesh.onBeforeRender = (renderCtx, sceneCtx, activeCamera) => {
+    if (renderer.xr.isPresenting && activeCamera?.viewport) {
+      panoMaterial.uniforms.eyeIndex.value = activeCamera.viewport.x === 0 ? 0 : 1;
+      return;
+    }
+    panoMaterial.uniforms.eyeIndex.value = 0;
+  };
   panoMesh.visible = false;
   scene.add(panoMesh);
 }
@@ -406,20 +423,16 @@ async function loadImage(file) {
   const ratio = image.width / image.height;
   const isCardboard = file.name?.toLowerCase().endsWith('.vr.jpg');
 
-  if ((isCardboard && rightEyeImage) || ratio >= 3.8) {
-    sphereMesh.visible = true;
-    panoMesh.visible = false;
-    if (isCardboard && rightEyeImage) {
-      const stacked = stackStereoSideBySide(image, rightEyeImage);
-      const stackedTexture = new THREE.Texture(stacked);
-      stackedTexture.needsUpdate = true;
-      stackedTexture.colorSpace = THREE.SRGBColorSpace;
-      stereoSphereMaterial.uniforms.map.value = stackedTexture;
-      stereoSphereMaterial.uniforms.stereoMode.value = 1;
-    } else {
-      stereoSphereMaterial.uniforms.map.value = texture;
-      stereoSphereMaterial.uniforms.stereoMode.value = 1;
-    }
+  if (isCardboard) {
+    panoMesh.visible = true;
+    sphereMesh.visible = false;
+    const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
+    imageTexture.needsUpdate = true;
+    imageTexture.colorSpace = THREE.SRGBColorSpace;
+    panoMaterial.uniforms.map.value = imageTexture;
+    panoMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+    const circumference = 2 * Math.PI * 5;
+    panoMesh.scale.y = Math.max(0.6, circumference / image.width * image.height / 3);
   } else if (ratio > 1.9 && ratio < 2.1) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
@@ -428,8 +441,9 @@ async function loadImage(file) {
   } else {
     panoMesh.visible = true;
     sphereMesh.visible = false;
-    material.uniforms.map.value = texture;
-    material.uniforms.depthMap.value = texture;
+    panoMaterial.uniforms.map.value = texture;
+    panoMaterial.uniforms.stereoMode.value = 0;
+    panoMesh.scale.y = 1;
   }
 
   galleryVisible = false;
@@ -482,12 +496,8 @@ function handleController(controller) {
     const source = session?.inputSources?.[controller.userData.index];
     const menuPressed = Boolean(source?.handedness === 'left' && source?.gamepad?.buttons?.[4]?.pressed);
     if (menuPressed && !menuButtonLatch) {
-      if (panoMesh.visible || sphereMesh.visible) {
-        exitToUploadScreen();
-      } else {
-        vrUiVisible = !vrUiVisible;
-        if (vrUiVisible) showVrUi(); else hideVrUi();
-      }
+      vrUiVisible = !vrUiVisible;
+      if (vrUiVisible) showVrUi(); else hideVrUi();
     }
     menuButtonLatch = menuPressed;
   }

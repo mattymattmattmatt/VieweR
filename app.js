@@ -470,8 +470,8 @@ async function createThumbnail(file) {
 
 async function loadImage(file) {
   const { image, source, shouldRevoke } = await loadImageElement(file);
-  const isCardboard = isVrPanoFile(file);
-  const rightEyeImage = isCardboard ? await extractCardboardRightEye(file) : null;
+  const rightEyeImage = await extractCardboardRightEye(file);
+  const isCardboard = isVrPanoFile(file) || !!rightEyeImage;
   const texture = new THREE.Texture(image); texture.needsUpdate = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   const ratio = image.width / image.height;

@@ -357,11 +357,6 @@ function showGallery() {
 }
 
 function exitToUploadScreen() {
-  if (!galleryVisible) {
-    imagePointerVisible = !imagePointerVisible;
-    controllerPointers.forEach((pointer) => { pointer.visible = imagePointerVisible; });
-    return;
-  }
   const session = renderer.xr.getSession();
   if (session) {
     session.end();
@@ -466,20 +461,21 @@ async function createThumbnail(file) {
 async function loadImage(file) {
   const { image, source, shouldRevoke } = await loadImageElement(file);
   const rightEyeImage = await extractCardboardRightEye(file);
-  const isCardboard = isVrPanoFile(file) || !!rightEyeImage;
+  const isVrPano = isVrPanoFile(file);
+  const hasStereoPair = isVrPano || !!rightEyeImage;
   const texture = new THREE.Texture(image); texture.needsUpdate = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   const ratio = image.width / image.height;
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
-  if (isCardboard) {
+  if (isVrPano) {
     panoMesh.visible = true;
     sphereMesh.visible = false;
     const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
     imageTexture.needsUpdate = true;
     imageTexture.colorSpace = THREE.SRGBColorSpace;
     panoMaterial.uniforms.map.value = imageTexture;
-    panoMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+    panoMaterial.uniforms.stereoMode.value = hasStereoPair && rightEyeImage ? 1 : 0;
     panoMesh.scale.y = 1;
   } else if (isEquirect) {
     sphereMesh.visible = true;
@@ -510,11 +506,13 @@ async function extractCardboardRightEye(file) {
       ? await file.arrayBuffer()
       : await (await fetch(file.url)).arrayBuffer();
     const text = new TextDecoder('latin1').decode(arrayBuffer);
-    const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=\s&#10;]+)["']/)
-      || text.match(/<GImage:Data>([A-Za-z0-9+/=\s&#10;]+)<\/GImage:Data>/);
+    const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/)
+      || text.match(/<GImage:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/GImage:Data>/);
     if (!match) return null;
     const base64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
-    const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
+        const normalizedBase64 = base64.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedBase64 = normalizedBase64.padEnd(Math.ceil(normalizedBase64.length / 4) * 4, '=');
+    const blob = new Blob([Uint8Array.from(atob(paddedBase64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
     if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
     activeObjectUrl = URL.createObjectURL(blob);
     const right = new Image();
@@ -553,13 +551,14 @@ function handleXrInput() {
 
   const menuPressed = Boolean(leftSource?.gamepad?.buttons?.[4]?.pressed);
   if (menuPressed && !menuButtonLatch) {
-    if (galleryVisible) {
-      vrUiVisible = false;
-      [backButton, menuButton].forEach((b) => { b.visible = false; });
-      controllerPointers.forEach((pointer) => { pointer.visible = true; });
+    vrUiVisible = !vrUiVisible;
+    if (vrUiVisible) {
+      showVrUi();
     } else {
-      vrUiVisible = !vrUiVisible;
-      if (vrUiVisible) showVrUi(); else hideVrUi();
+      hideVrUi();
+      if (galleryVisible) {
+        controllerPointers.forEach((pointer) => { pointer.visible = true; });
+      }
     }
   }
   menuButtonLatch = menuPressed;

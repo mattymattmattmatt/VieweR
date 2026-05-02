@@ -200,9 +200,10 @@ function isImageFile(file) {
 
 
 function isVrPanoFile(file) {
-  const name = file.name?.toLowerCase?.() || '';
-  const url = file.url?.toLowerCase?.() || '';
-  return name.endsWith('.vr.jpg') || url.endsWith('.vr.jpg');
+  const name = file.name?.toLowerCase?.().trim() || '';
+  const url = file.url?.toLowerCase?.().trim() || '';
+  return name.endsWith('.vr.jpg') || name.endsWith('.vr.jpeg')
+    || url.endsWith('.vr.jpg') || url.endsWith('.vr.jpeg');
 }
 
 function createPanoMesh() {
@@ -574,16 +575,15 @@ function handleXrInput() {
     || rightButtons[4]?.pressed || rightButtons[5]?.pressed || rightButtons[3]?.pressed
   );
   if (menuPressed && !menuButtonLatch) {
-    vrUiVisible = !vrUiVisible;
-    if (vrUiVisible) {
-      showVrUi();
-      if (galleryVisible) {
-        controllerPointers.forEach((pointer) => { pointer.visible = true; });
-      }
+    if (galleryVisible) {
+      toggleGalleryVisibility();
+      controllerPointers.forEach((pointer) => { pointer.visible = true; });
     } else {
-      hideVrUi();
-      if (galleryVisible) {
-        controllerPointers.forEach((pointer) => { pointer.visible = true; });
+      vrUiVisible = !vrUiVisible;
+      if (vrUiVisible) {
+        showVrUi();
+      } else {
+        hideVrUi();
       }
     }
   }

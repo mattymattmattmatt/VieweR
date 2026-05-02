@@ -10,6 +10,7 @@ let sphereMesh;
 let panoMaterial;
 let backButton;
 let menuButton;
+let controllerPointers = [];
 let stereoSphereMaterial;
 let panoStereoMode = 0;
 
@@ -209,6 +210,7 @@ function isVrPanoFile(file) {
 function createPanoMesh() {
   const geometry = new THREE.CylinderGeometry(5, 5, 3, 128, 64, true, -Math.PI / 2, Math.PI);
   panoMaterial = new THREE.ShaderMaterial({
+    side: THREE.DoubleSide,
     uniforms: { map: { value: null }, eyeIndex: { value: 0 }, stereoMode: { value: 0 } },
     vertexShader: `varying vec2 vUv; void main(){ vUv=uv; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }`,
     fragmentShader: `varying vec2 vUv; uniform sampler2D map; uniform float eyeIndex; uniform float stereoMode;
@@ -328,8 +330,14 @@ function createUiButtonsInVr() {
   });
 }
 
-function hideVrUi() { [backButton, menuButton].forEach((b) => { b.visible = false; }); }
-function showVrUi() { [backButton, menuButton].forEach((b) => { b.visible = true; }); }
+function hideVrUi() {
+  [backButton, menuButton].forEach((b) => { b.visible = false; });
+  controllerPointers.forEach((pointer) => { pointer.visible = false; });
+}
+function showVrUi() {
+  [backButton, menuButton].forEach((b) => { b.visible = true; });
+  controllerPointers.forEach((pointer) => { pointer.visible = true; });
+}
 
 function toggleGalleryVisibility() {
   galleryVisible = !galleryVisible;
@@ -372,6 +380,8 @@ function setupControllers() {
       new THREE.LineBasicMaterial({ color: 0x8fb0ff })
     );
     controller.add(pointer);
+    pointer.visible = vrUiVisible;
+    controllerPointers.push(pointer);
     controller.userData.index = i;
     controller.userData.menuPressed = false;
     scene.add(controller);
@@ -543,7 +553,7 @@ function handleXrInput() {
 
   const rightStickX = rightSource?.gamepad?.axes?.[2] ?? rightSource?.gamepad?.axes?.[0] ?? 0;
   if (!snapTurnLatch && Math.abs(rightStickX) > SNAP_TURN_THRESHOLD) {
-    const delta = rightStickX > 0 ? -SNAP_TURN_ANGLE : SNAP_TURN_ANGLE;
+    const delta = rightStickX > 0 ? SNAP_TURN_ANGLE : -SNAP_TURN_ANGLE;
     if (sphereMesh.visible) sphereMesh.rotation.y += delta;
     if (panoMesh.visible) panoMesh.rotation.y += delta;
     snapTurnLatch = true;

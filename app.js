@@ -468,7 +468,7 @@ async function loadImage(file) {
   const ratio = image.width / image.height;
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
-  if (isCardboard) {
+  if (hasStereoPair) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
     const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;

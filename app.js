@@ -25,6 +25,7 @@ let galleryBuildId = 0;
 let immersiveVrSupported = null;
 let menuButtonLatch = false;
 let snapTurnLatch = false;
+let imagePointerVisible = true;
 const SNAP_TURN_ANGLE = THREE.MathUtils.degToRad(30);
 const SNAP_TURN_THRESHOLD = 0.65;
 
@@ -82,8 +83,8 @@ function setupEnterVrButton() {
 
   renderer.xr.addEventListener('sessionstart', () => {
     uiCard.classList.add('hidden');
-    vrUiVisible = false;
-    hideVrUi();
+    vrUiVisible = true;
+    showVrUi();
     showGallery();
   });
 
@@ -208,7 +209,7 @@ function isVrPanoFile(file) {
 }
 
 function createPanoMesh() {
-  const geometry = new THREE.CylinderGeometry(5, 5, 3, 128, 64, true, -Math.PI / 2, Math.PI);
+  const geometry = new THREE.CylinderGeometry(5, 5, 3, 128, 64, true, -Math.PI / 2, Math.PI * 2);
   panoMaterial = new THREE.ShaderMaterial({
     side: THREE.DoubleSide,
     uniforms: { map: { value: null }, eyeIndex: { value: 0 }, stereoMode: { value: 0 } },
@@ -350,13 +351,22 @@ function showGallery() {
   panoMesh.visible = false;
   sphereMesh.visible = false;
   galleryVisible = true;
+  imagePointerVisible = true;
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = true;
   });
-  if (vrUiVisible) showVrUi();
+  if (vrUiVisible) {
+    showVrUi();
+    controllerPointers.forEach((pointer) => { pointer.visible = true; });
+  }
 }
 
 function exitToUploadScreen() {
+  if (!galleryVisible) {
+    imagePointerVisible = !imagePointerVisible;
+    controllerPointers.forEach((pointer) => { pointer.visible = imagePointerVisible; });
+    return;
+  }
   const session = renderer.xr.getSession();
   if (session) {
     session.end();
@@ -465,6 +475,7 @@ async function loadImage(file) {
   const texture = new THREE.Texture(image); texture.needsUpdate = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   const ratio = image.width / image.height;
+  const isEquirect = ratio > 1.85 && ratio < 2.15;
 
   if (isCardboard) {
     panoMesh.visible = true;
@@ -476,7 +487,7 @@ async function loadImage(file) {
     panoMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
     const circumference = 2 * Math.PI * 5;
     panoMesh.scale.y = Math.max(0.6, circumference / image.width * image.height / 3);
-  } else if (ratio > 1.9 && ratio < 2.1) {
+  } else if (isEquirect) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
     stereoSphereMaterial.uniforms.map.value = texture;
@@ -490,6 +501,8 @@ async function loadImage(file) {
   }
 
   galleryVisible = false;
+  imagePointerVisible = true;
+  controllerPointers.forEach((pointer) => { pointer.visible = true; });
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = false;
   });

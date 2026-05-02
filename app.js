@@ -21,7 +21,7 @@ let galleryVisible = true;
 let activeObjectUrl = null;
 let vrUiVisible = false;
 let galleryBuildId = 0;
-let immersiveVrSupported = false;
+let immersiveVrSupported = null;
 
 const demoImages = [
   { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
@@ -94,21 +94,41 @@ function setupEnterVrButton() {
 }
 
 async function detectVrSupport() {
-  if (!navigator.xr) return;
+  if (!navigator.xr) {
+    immersiveVrSupported = false;
+    enterVrButton.disabled = true;
+    enterVrButton.textContent = 'WebXR Not Available';
+    fileCount.textContent = 'Open this app in Quest Browser over HTTPS or localhost.';
+    return false;
+  }
+
   try {
     immersiveVrSupported = await navigator.xr.isSessionSupported('immersive-vr');
   } catch {
     immersiveVrSupported = false;
   }
+
+  if (!immersiveVrSupported) {
+    enterVrButton.disabled = true;
+    enterVrButton.textContent = 'VR Not Supported Here';
+    fileCount.textContent = 'Immersive VR is unavailable in this browser/context.';
+  }
+
+  return immersiveVrSupported;
 }
 
 async function startVrSession() {
-  if (!navigator.xr || !immersiveVrSupported) return;
+  const supported = immersiveVrSupported === null ? await detectVrSupport() : immersiveVrSupported;
+  if (!navigator.xr || !supported) return;
+
   try {
-    const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
+    const session = await navigator.xr.requestSession('immersive-vr', {
+      optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor']
+    });
     renderer.xr.setSession(session);
   } catch (error) {
     console.error('Failed to start VR session:', error);
+    fileCount.textContent = `Could not start VR: ${error?.message || 'unknown error'}`;
   }
 }
 
@@ -170,7 +190,7 @@ function setupClearButton() {
 function updateFileCount(isDemo = false) {
   const count = loadedFiles.length;
   fileCount.textContent = `${count} ${isDemo ? 'demo image' : 'image file'}${count === 1 ? '' : 's'} loaded`;
-  enterVrButton.disabled = count === 0;
+  enterVrButton.disabled = count === 0 || immersiveVrSupported === false;
 }
 
 function isImageFile(file) {

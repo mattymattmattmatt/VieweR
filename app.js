@@ -20,6 +20,7 @@ let loadedFiles = [];
 let galleryVisible = true;
 let activeObjectUrl = null;
 let vrUiVisible = false;
+let galleryBuildId = 0;
 
 const demoImages = [
   { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
@@ -232,10 +233,7 @@ function createUiButtonsInVr() {
 
   menuButton = createTextButton('Menu', 0, 1.15, -1);
   menuButton.visible = false;
-  menuButton.userData.onClick = () => {
-    const session = renderer.xr.getSession();
-    if (session) session.end();
-  };
+  menuButton.userData.onClick = toggleGalleryVisibility;
 
   exitVrButton3D = createTextButton('Exit VR', 0.5, 1.15, -1);
   exitVrButton3D.visible = false;
@@ -306,12 +304,17 @@ function setupHands() {
 
 function createGallery(files) {
   clearGallery();
+  const buildId = ++galleryBuildId;
   const radius = 2.5;
   files.forEach(async (file, index) => {
     const n = Math.max(files.length, 1);
     const phi = Math.acos(1 - (2 * (index + 0.5) / n));
     const theta = Math.PI * (1 + Math.sqrt(5)) * (index + 0.5);
     const texture = await createThumbnail(file);
+    if (buildId !== galleryBuildId) {
+      texture.dispose();
+      return;
+    }
     const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4), new THREE.MeshBasicMaterial({ map: texture }));
     mesh.position.set(
       Math.cos(theta) * Math.sin(phi) * radius,
@@ -328,8 +331,14 @@ function createGallery(files) {
 }
 
 function clearGallery() {
+  galleryBuildId += 1;
   interactiveObjects.forEach((obj) => {
-    if (obj !== backButton && obj !== menuButton && obj !== exitVrButton3D) scene.remove(obj);
+    if (obj !== backButton && obj !== menuButton && obj !== exitVrButton3D) {
+      scene.remove(obj);
+      obj.material?.map?.dispose?.();
+      obj.material?.dispose?.();
+      obj.geometry?.dispose?.();
+    }
   });
   interactiveObjects = [backButton, menuButton, exitVrButton3D];
 }

@@ -24,9 +24,12 @@ let vrUiVisible = false;
 let galleryBuildId = 0;
 let immersiveVrSupported = null;
 let menuButtonLatch = false;
+let snapTurnLatch = false;
+const SNAP_TURN_ANGLE = THREE.MathUtils.degToRad(30);
+const SNAP_TURN_THRESHOLD = 0.65;
 
 const demoImages = [
-  { name: 'Test 3D360PANO.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
+  { name: 'Test 3D360PANO.vr.jpg', url: 'Demo Images/Test 3D360PANO.vr.jpg' },
   { name: 'Test 360SPHERE.jpg', url: 'Demo Images/Test 360SPHERE.jpg' }
 ];
 
@@ -201,6 +204,13 @@ function isImageFile(file) {
   return ['.vr.jpg', '.jpg', '.jpeg', '.png', '.webp', '.gif', '.bmp', '.avif', '.heic', '.heif'].some((ext) => lowerName.endsWith(ext));
 }
 
+
+function isVrPanoFile(file) {
+  const name = file.name?.toLowerCase?.() || '';
+  const url = file.url?.toLowerCase?.() || '';
+  return name.endsWith('.vr.jpg') || url.endsWith('.vr.jpg');
+}
+
 function createPanoMesh() {
   const geometry = new THREE.CylinderGeometry(5, 5, 3, 128, 64, true, -Math.PI / 2, Math.PI);
   panoMaterial = new THREE.ShaderMaterial({
@@ -267,14 +277,44 @@ function createTextButton(label, x, y, z) {
   const canvas = document.createElement('canvas');
   canvas.width = 512; canvas.height = 192;
   const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#1f2537'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.strokeStyle = '#90a6ff'; ctx.lineWidth = 8; ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16);
-  ctx.fillStyle = '#ffffff'; ctx.font = 'bold 68px sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText(label, canvas.width / 2, canvas.height / 2);
+  const grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+  grad.addColorStop(0, '#4f75ff');
+  grad.addColorStop(1, '#24366b');
+  ctx.fillStyle = grad;
+  roundRect(ctx, 6, 6, canvas.width - 12, canvas.height - 12, 28);
+  ctx.fill();
+
+  ctx.strokeStyle = 'rgba(188, 207, 255, 0.95)';
+  ctx.lineWidth = 10;
+  roundRect(ctx, 10, 10, canvas.width - 20, canvas.height - 20, 24);
+  ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.24)';
+  roundRect(ctx, 22, 20, canvas.width - 44, 62, 18);
+  ctx.fill();
+
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.4)';
+  ctx.shadowBlur = 14;
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 64px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(label, canvas.width / 2, canvas.height / 2 + 6);
+  ctx.shadowBlur = 0;
   const texture = new THREE.CanvasTexture(canvas);
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.36, 0.13), new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
   mesh.position.set(x, y, z);
   return mesh;
+}
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 
 function createUiButtonsInVr() {
@@ -284,7 +324,7 @@ function createUiButtonsInVr() {
 
   menuButton = createTextButton('Menu', 0, 1.15, -1);
   menuButton.visible = false;
-  menuButton.userData.onClick = toggleGalleryVisibility;
+  menuButton.userData.onClick = exitToUploadScreen;
 
   exitVrButton3D = createTextButton('Exit VR', 0.5, 1.15, -1);
   exitVrButton3D.visible = false;
@@ -417,11 +457,11 @@ async function createThumbnail(file) {
 
 async function loadImage(file) {
   const { image, source, shouldRevoke } = await loadImageElement(file);
-  const rightEyeImage = file.name?.toLowerCase().endsWith('.vr.jpg') ? await extractCardboardRightEye(file) : null;
+  const isCardboard = isVrPanoFile(file);
+  const rightEyeImage = isCardboard ? await extractCardboardRightEye(file) : null;
   const texture = new THREE.Texture(image); texture.needsUpdate = true;
   texture.colorSpace = THREE.SRGBColorSpace;
   const ratio = image.width / image.height;
-  const isCardboard = file.name?.toLowerCase().endsWith('.vr.jpg');
 
   if (isCardboard) {
     panoMesh.visible = true;
@@ -500,6 +540,16 @@ function handleController(controller) {
       if (vrUiVisible) showVrUi(); else hideVrUi();
     }
     menuButtonLatch = menuPressed;
+
+    const rightStickX = source?.handedness === 'right' ? (source?.gamepad?.axes?.[2] ?? source?.gamepad?.axes?.[0] ?? 0) : 0;
+    if (!snapTurnLatch && Math.abs(rightStickX) > SNAP_TURN_THRESHOLD) {
+      const delta = rightStickX > 0 ? -SNAP_TURN_ANGLE : SNAP_TURN_ANGLE;
+      if (sphereMesh.visible) sphereMesh.rotation.y += delta;
+      if (panoMesh.visible) panoMesh.rotation.y += delta;
+      snapTurnLatch = true;
+    } else if (snapTurnLatch && Math.abs(rightStickX) < 0.25) {
+      snapTurnLatch = false;
+    }
   }
   tempMatrix.identity().extractRotation(controller.matrixWorld);
   raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);

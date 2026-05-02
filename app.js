@@ -468,15 +468,14 @@ async function loadImage(file) {
   const ratio = image.width / image.height;
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
-  if (isVrPano) {
-    panoMesh.visible = true;
-    sphereMesh.visible = false;
+  if (isCardboard) {
+    sphereMesh.visible = true;
+    panoMesh.visible = false;
     const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
     imageTexture.needsUpdate = true;
     imageTexture.colorSpace = THREE.SRGBColorSpace;
-    panoMaterial.uniforms.map.value = imageTexture;
-    panoMaterial.uniforms.stereoMode.value = hasStereoPair && rightEyeImage ? 1 : 0;
-    panoMesh.scale.y = 1;
+    stereoSphereMaterial.uniforms.map.value = imageTexture;
+    stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
   } else if (isEquirect) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
@@ -554,6 +553,10 @@ function handleXrInput() {
     vrUiVisible = !vrUiVisible;
     if (vrUiVisible) {
       showVrUi();
+      if (galleryVisible) {
+        [backButton, menuButton].forEach((b) => { b.visible = false; });
+        controllerPointers.forEach((pointer) => { pointer.visible = true; });
+      }
     } else {
       hideVrUi();
       if (galleryVisible) {

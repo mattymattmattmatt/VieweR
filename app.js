@@ -470,20 +470,26 @@ async function loadImage(file) {
 
     const rightEyeImage = await extractCardboardRightEye(file);
     const isVrPano = isVrPanoFile(file);
-    const hasStereoPair = isVrPano || !!rightEyeImage;
+    const hasStereoPair = !!rightEyeImage;
     const texture = new THREE.Texture(image); texture.needsUpdate = true;
     texture.colorSpace = THREE.SRGBColorSpace;
     const ratio = image.width / image.height;
     const isEquirect = ratio > 1.85 && ratio < 2.15;
 
-    if (hasStereoPair) {
+    if (isVrPano) {
+      panoMesh.visible = true;
+      sphereMesh.visible = false;
+      panoMaterial.uniforms.map.value = texture;
+      panoMaterial.uniforms.stereoMode.value = -1;
+      panoMesh.scale.y = 1;
+    } else if (hasStereoPair) {
       sphereMesh.visible = true;
       panoMesh.visible = false;
-      const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
+      const imageTexture = new THREE.Texture(stackStereoSideBySide(image, rightEyeImage));
       imageTexture.needsUpdate = true;
       imageTexture.colorSpace = THREE.SRGBColorSpace;
       stereoSphereMaterial.uniforms.map.value = imageTexture;
-      stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+      stereoSphereMaterial.uniforms.stereoMode.value = 1;
     } else if (isEquirect) {
       sphereMesh.visible = true;
       panoMesh.visible = false;
@@ -562,13 +568,16 @@ function handleXrInput() {
   const rightSource = inputSources.find((source) => source?.handedness === 'right');
 
   const leftButtons = leftSource?.gamepad?.buttons || [];
-  const menuPressed = Boolean(leftButtons[4]?.pressed || leftButtons[5]?.pressed || leftButtons[3]?.pressed);
+  const rightButtons = rightSource?.gamepad?.buttons || [];
+  const menuPressed = Boolean(
+    leftButtons[4]?.pressed || leftButtons[5]?.pressed || leftButtons[3]?.pressed
+    || rightButtons[4]?.pressed || rightButtons[5]?.pressed || rightButtons[3]?.pressed
+  );
   if (menuPressed && !menuButtonLatch) {
     vrUiVisible = !vrUiVisible;
     if (vrUiVisible) {
       showVrUi();
       if (galleryVisible) {
-        [backButton, menuButton].forEach((b) => { b.visible = false; });
         controllerPointers.forEach((pointer) => { pointer.visible = true; });
       }
     } else {

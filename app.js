@@ -459,42 +459,42 @@ async function createThumbnail(file) {
 }
 
 async function loadImage(file) {
-  let source;
-  let shouldRevoke = false;
-  try {
-    const loaded = await loadImageElement(file);
-    const image = loaded.image;
-    source = loaded.source;
-    shouldRevoke = loaded.shouldRevoke;
+  const { image, source, shouldRevoke } = await loadImageElement(file);
+  const rightEyeImage = await extractCardboardRightEye(file);
+  const isVrPano = isVrPanoFile(file);
+  const hasStereoPair = isVrPano || !!rightEyeImage;
+  const texture = new THREE.Texture(image); texture.needsUpdate = true;
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const ratio = image.width / image.height;
+  const isEquirect = ratio > 1.85 && ratio < 2.15;
 
-    const rightEyeImage = await extractCardboardRightEye(file);
-    const isVrPano = isVrPanoFile(file);
-    const hasStereoPair = isVrPano || !!rightEyeImage;
-    const texture = new THREE.Texture(image); texture.needsUpdate = true;
-    texture.colorSpace = THREE.SRGBColorSpace;
-    const ratio = image.width / image.height;
-    const isEquirect = ratio > 1.85 && ratio < 2.15;
+  if (hasStereoPair) {
+    sphereMesh.visible = true;
+    panoMesh.visible = false;
+    const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
+    imageTexture.needsUpdate = true;
+    imageTexture.colorSpace = THREE.SRGBColorSpace;
+    stereoSphereMaterial.uniforms.map.value = imageTexture;
+    stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+  } else if (isEquirect) {
+    sphereMesh.visible = true;
+    panoMesh.visible = false;
+    stereoSphereMaterial.uniforms.map.value = texture;
+    stereoSphereMaterial.uniforms.stereoMode.value = 0;
+  } else {
+    panoMesh.visible = true;
+    sphereMesh.visible = false;
+    panoMaterial.uniforms.map.value = texture;
+    panoMaterial.uniforms.stereoMode.value = 0;
+    panoMesh.scale.y = 1;
+  }
 
-    if (hasStereoPair) {
-      sphereMesh.visible = true;
-      panoMesh.visible = false;
-      const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
-      imageTexture.needsUpdate = true;
-      imageTexture.colorSpace = THREE.SRGBColorSpace;
-      stereoSphereMaterial.uniforms.map.value = imageTexture;
-      stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
-    } else if (isEquirect) {
-      sphereMesh.visible = true;
-      panoMesh.visible = false;
-      stereoSphereMaterial.uniforms.map.value = texture;
-      stereoSphereMaterial.uniforms.stereoMode.value = 0;
-    } else {
-      panoMesh.visible = true;
-      sphereMesh.visible = false;
-      panoMaterial.uniforms.map.value = texture;
-      panoMaterial.uniforms.stereoMode.value = 0;
-      panoMesh.scale.y = 1;
-    }
+  galleryVisible = false;
+  imagePointerVisible = false;
+  controllerPointers.forEach((pointer) => { pointer.visible = false; });
+  interactiveObjects.forEach((obj) => {
+    if (obj.userData.isThumb) obj.visible = false;
+  });
 
     galleryVisible = false;
     imagePointerVisible = false;

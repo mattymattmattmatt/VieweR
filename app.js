@@ -481,7 +481,7 @@ async function loadImage(file) {
       panoMesh.visible = true;
       sphereMesh.visible = false;
       panoMaterial.uniforms.map.value = texture;
-      panoMaterial.uniforms.stereoMode.value = -1;
+      panoMaterial.uniforms.stereoMode.value = 1;
       panoMesh.scale.y = 1;
     } else if (hasStereoPair) {
       sphereMesh.visible = true;

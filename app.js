@@ -480,8 +480,18 @@ async function loadImage(file) {
     if (isVrPano) {
       panoMesh.visible = true;
       sphereMesh.visible = false;
-      panoMaterial.uniforms.map.value = texture;
-      panoMaterial.uniforms.stereoMode.value = 1;
+
+      if (hasStereoPair) {
+        const panoStereoTexture = new THREE.Texture(stackStereoSideBySide(image, rightEyeImage));
+        panoStereoTexture.needsUpdate = true;
+        panoStereoTexture.colorSpace = THREE.SRGBColorSpace;
+        panoMaterial.uniforms.map.value = panoStereoTexture;
+        panoMaterial.uniforms.stereoMode.value = 1;
+      } else {
+        panoMaterial.uniforms.map.value = texture;
+        panoMaterial.uniforms.stereoMode.value = 0;
+      }
+
       panoMesh.scale.y = 1;
     } else if (hasStereoPair) {
       sphereMesh.visible = true;

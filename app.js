@@ -459,44 +459,56 @@ async function createThumbnail(file) {
 }
 
 async function loadImage(file) {
-  const { image, source, shouldRevoke } = await loadImageElement(file);
-  const rightEyeImage = await extractCardboardRightEye(file);
-  const isVrPano = isVrPanoFile(file);
-  const hasStereoPair = isVrPano || !!rightEyeImage;
-  const texture = new THREE.Texture(image); texture.needsUpdate = true;
-  texture.colorSpace = THREE.SRGBColorSpace;
-  const ratio = image.width / image.height;
-  const isEquirect = ratio > 1.85 && ratio < 2.15;
+  let source;
+  let shouldRevoke = false;
+  try {
+    const loaded = await loadImageElement(file);
+    const image = loaded.image;
+    source = loaded.source;
+    shouldRevoke = loaded.shouldRevoke;
 
-  if (isCardboard) {
-    sphereMesh.visible = true;
-    panoMesh.visible = false;
-    const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
-    imageTexture.needsUpdate = true;
-    imageTexture.colorSpace = THREE.SRGBColorSpace;
-    stereoSphereMaterial.uniforms.map.value = imageTexture;
-    stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
-  } else if (isEquirect) {
-    sphereMesh.visible = true;
-    panoMesh.visible = false;
-    stereoSphereMaterial.uniforms.map.value = texture;
-    stereoSphereMaterial.uniforms.stereoMode.value = 0;
-  } else {
-    panoMesh.visible = true;
-    sphereMesh.visible = false;
-    panoMaterial.uniforms.map.value = texture;
-    panoMaterial.uniforms.stereoMode.value = 0;
-    panoMesh.scale.y = 1;
+    const rightEyeImage = await extractCardboardRightEye(file);
+    const isVrPano = isVrPanoFile(file);
+    const hasStereoPair = isVrPano || !!rightEyeImage;
+    const texture = new THREE.Texture(image); texture.needsUpdate = true;
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const ratio = image.width / image.height;
+    const isEquirect = ratio > 1.85 && ratio < 2.15;
+
+    if (hasStereoPair) {
+      sphereMesh.visible = true;
+      panoMesh.visible = false;
+      const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
+      imageTexture.needsUpdate = true;
+      imageTexture.colorSpace = THREE.SRGBColorSpace;
+      stereoSphereMaterial.uniforms.map.value = imageTexture;
+      stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
+    } else if (isEquirect) {
+      sphereMesh.visible = true;
+      panoMesh.visible = false;
+      stereoSphereMaterial.uniforms.map.value = texture;
+      stereoSphereMaterial.uniforms.stereoMode.value = 0;
+    } else {
+      panoMesh.visible = true;
+      sphereMesh.visible = false;
+      panoMaterial.uniforms.map.value = texture;
+      panoMaterial.uniforms.stereoMode.value = 0;
+      panoMesh.scale.y = 1;
+    }
+
+    galleryVisible = false;
+    imagePointerVisible = false;
+    controllerPointers.forEach((pointer) => { pointer.visible = false; });
+    interactiveObjects.forEach((obj) => {
+      if (obj.userData.isThumb) obj.visible = false;
+    });
+  } catch (error) {
+    console.error('Failed to load selected image:', error);
+    fileCount.textContent = `Failed to open image: ${file?.name || 'unknown file'}`;
+    showGallery();
+  } finally {
+    if (shouldRevoke && source) URL.revokeObjectURL(source);
   }
-
-  galleryVisible = false;
-  imagePointerVisible = false;
-  controllerPointers.forEach((pointer) => { pointer.visible = false; });
-  interactiveObjects.forEach((obj) => {
-    if (obj.userData.isThumb) obj.visible = false;
-  });
-
-  if (shouldRevoke) URL.revokeObjectURL(source);
 }
 
 async function extractCardboardRightEye(file) {
@@ -548,7 +560,8 @@ function handleXrInput() {
   const leftSource = inputSources.find((source) => source?.handedness === 'left');
   const rightSource = inputSources.find((source) => source?.handedness === 'right');
 
-  const menuPressed = Boolean(leftSource?.gamepad?.buttons?.[4]?.pressed);
+  const leftButtons = leftSource?.gamepad?.buttons || [];
+  const menuPressed = Boolean(leftButtons[4]?.pressed || leftButtons[5]?.pressed || leftButtons[3]?.pressed);
   if (menuPressed && !menuButtonLatch) {
     vrUiVisible = !vrUiVisible;
     if (vrUiVisible) {

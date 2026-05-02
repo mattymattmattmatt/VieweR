@@ -527,7 +527,7 @@ function animate() {
 function handleXrInput() {
   if (!renderer.xr.isPresenting) return;
   const session = renderer.xr.getSession();
-  const inputSources = session?.inputSources || [];
+  const inputSources = Array.from(session?.inputSources || []);
   const leftSource = inputSources.find((source) => source?.handedness === 'left');
   const rightSource = inputSources.find((source) => source?.handedness === 'right');
 

@@ -357,11 +357,6 @@ function showGallery() {
 }
 
 function exitToUploadScreen() {
-  if (!galleryVisible) {
-    imagePointerVisible = !imagePointerVisible;
-    controllerPointers.forEach((pointer) => { pointer.visible = imagePointerVisible; });
-    return;
-  }
   const session = renderer.xr.getSession();
   if (session) {
     session.end();
@@ -473,14 +468,13 @@ async function loadImage(file) {
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
   if (isCardboard) {
-    panoMesh.visible = true;
-    sphereMesh.visible = false;
+    sphereMesh.visible = true;
+    panoMesh.visible = false;
     const imageTexture = rightEyeImage ? new THREE.Texture(stackStereoSideBySide(image, rightEyeImage)) : texture;
     imageTexture.needsUpdate = true;
     imageTexture.colorSpace = THREE.SRGBColorSpace;
-    panoMaterial.uniforms.map.value = imageTexture;
-    panoMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
-    panoMesh.scale.y = 1;
+    stereoSphereMaterial.uniforms.map.value = imageTexture;
+    stereoSphereMaterial.uniforms.stereoMode.value = rightEyeImage ? 1 : 0;
   } else if (isEquirect) {
     sphereMesh.visible = true;
     panoMesh.visible = false;
@@ -510,11 +504,13 @@ async function extractCardboardRightEye(file) {
       ? await file.arrayBuffer()
       : await (await fetch(file.url)).arrayBuffer();
     const text = new TextDecoder('latin1').decode(arrayBuffer);
-    const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=\s&#10;]+)["']/)
-      || text.match(/<GImage:Data>([A-Za-z0-9+/=\s&#10;]+)<\/GImage:Data>/);
+    const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/)
+      || text.match(/<GImage:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/GImage:Data>/);
     if (!match) return null;
     const base64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
-    const blob = new Blob([Uint8Array.from(atob(base64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
+        const normalizedBase64 = base64.replace(/-/g, '+').replace(/_/g, '/');
+    const paddedBase64 = normalizedBase64.padEnd(Math.ceil(normalizedBase64.length / 4) * 4, '=');
+    const blob = new Blob([Uint8Array.from(atob(paddedBase64), (c) => c.charCodeAt(0))], { type: 'image/jpeg' });
     if (activeObjectUrl) URL.revokeObjectURL(activeObjectUrl);
     activeObjectUrl = URL.createObjectURL(blob);
     const right = new Image();

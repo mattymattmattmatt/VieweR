@@ -489,7 +489,10 @@ async function loadImage(file) {
 
 async function extractCardboardRightEye(file) {
   try {
-    const text = new TextDecoder('latin1').decode(await file.arrayBuffer());
+    const arrayBuffer = typeof file.arrayBuffer === 'function'
+      ? await file.arrayBuffer()
+      : await (await fetch(file.url)).arrayBuffer();
+    const text = new TextDecoder('latin1').decode(arrayBuffer);
     const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=\s&#10;]+)["']/)
       || text.match(/<GImage:Data>([A-Za-z0-9+/=\s&#10;]+)<\/GImage:Data>/);
     if (!match) return null;

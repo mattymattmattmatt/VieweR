@@ -10,7 +10,6 @@ let sphereMesh;
 let panoMaterial;
 let backButton;
 let menuButton;
-let exitVrButton3D;
 let stereoSphereMaterial;
 let panoStereoMode = 0;
 
@@ -92,10 +91,6 @@ function setupEnterVrButton() {
     hideVrUi();
   });
 
-  exitVrButton3D.userData.onClick = () => {
-    const session = renderer.xr.getSession();
-    if (session) session.end();
-  };
 }
 
 async function detectVrSupport() {
@@ -229,6 +224,7 @@ function createPanoMesh() {
   });
   panoMesh = new THREE.Mesh(geometry, panoMaterial);
   panoMesh.scale.x = -1;
+  panoMesh.position.y = 1.6;
   panoMesh.onBeforeRender = (renderCtx, sceneCtx, activeCamera) => {
     if (renderer.xr.isPresenting && activeCamera?.viewport) {
       panoMaterial.uniforms.eyeIndex.value = activeCamera.viewport.x === 0 ? 0 : 1;
@@ -326,17 +322,14 @@ function createUiButtonsInVr() {
   menuButton.visible = false;
   menuButton.userData.onClick = exitToUploadScreen;
 
-  exitVrButton3D = createTextButton('Exit VR', 0.5, 1.15, -1);
-  exitVrButton3D.visible = false;
-
-  [backButton, menuButton, exitVrButton3D].forEach((b) => {
+  [backButton, menuButton].forEach((b) => {
     scene.add(b);
     interactiveObjects.push(b);
   });
 }
 
-function hideVrUi() { [backButton, menuButton, exitVrButton3D].forEach((b) => { b.visible = false; }); }
-function showVrUi() { [backButton, menuButton, exitVrButton3D].forEach((b) => { b.visible = true; }); }
+function hideVrUi() { [backButton, menuButton].forEach((b) => { b.visible = false; }); }
+function showVrUi() { [backButton, menuButton].forEach((b) => { b.visible = true; }); }
 
 function toggleGalleryVisibility() {
   galleryVisible = !galleryVisible;
@@ -427,14 +420,14 @@ function createGallery(files) {
 function clearGallery() {
   galleryBuildId += 1;
   interactiveObjects.forEach((obj) => {
-    if (obj !== backButton && obj !== menuButton && obj !== exitVrButton3D) {
+    if (obj !== backButton && obj !== menuButton) {
       scene.remove(obj);
       obj.material?.map?.dispose?.();
       obj.material?.dispose?.();
       obj.geometry?.dispose?.();
     }
   });
-  interactiveObjects = [backButton, menuButton, exitVrButton3D];
+  interactiveObjects = [backButton, menuButton];
 }
 
 async function loadImageElement(file) {
@@ -496,7 +489,10 @@ async function loadImage(file) {
 
 async function extractCardboardRightEye(file) {
   try {
-    const text = new TextDecoder('latin1').decode(await file.arrayBuffer());
+    const arrayBuffer = typeof file.arrayBuffer === 'function'
+      ? await file.arrayBuffer()
+      : await (await fetch(file.url)).arrayBuffer();
+    const text = new TextDecoder('latin1').decode(arrayBuffer);
     const match = text.match(/GImage:Data\s*=\s*["']([A-Za-z0-9+/=\s&#10;]+)["']/)
       || text.match(/<GImage:Data>([A-Za-z0-9+/=\s&#10;]+)<\/GImage:Data>/);
     if (!match) return null;
@@ -525,32 +521,38 @@ function stackStereoSideBySide(leftImage, rightImage) {
 
 function animate() {
   renderer.setAnimationLoop(() => {
+    handleXrInput();
     controllers.forEach(handleController);
     renderer.render(scene, camera);
   });
 }
 
-function handleController(controller) {
-  if (renderer.xr.isPresenting) {
-    const session = renderer.xr.getSession();
-    const source = session?.inputSources?.[controller.userData.index];
-    const menuPressed = Boolean(source?.handedness === 'left' && source?.gamepad?.buttons?.[4]?.pressed);
-    if (menuPressed && !menuButtonLatch) {
-      vrUiVisible = !vrUiVisible;
-      if (vrUiVisible) showVrUi(); else hideVrUi();
-    }
-    menuButtonLatch = menuPressed;
+function handleXrInput() {
+  if (!renderer.xr.isPresenting) return;
+  const session = renderer.xr.getSession();
+  const inputSources = Array.from(session?.inputSources || []);
+  const leftSource = inputSources.find((source) => source?.handedness === 'left');
+  const rightSource = inputSources.find((source) => source?.handedness === 'right');
 
-    const rightStickX = source?.handedness === 'right' ? (source?.gamepad?.axes?.[2] ?? source?.gamepad?.axes?.[0] ?? 0) : 0;
-    if (!snapTurnLatch && Math.abs(rightStickX) > SNAP_TURN_THRESHOLD) {
-      const delta = rightStickX > 0 ? -SNAP_TURN_ANGLE : SNAP_TURN_ANGLE;
-      if (sphereMesh.visible) sphereMesh.rotation.y += delta;
-      if (panoMesh.visible) panoMesh.rotation.y += delta;
-      snapTurnLatch = true;
-    } else if (snapTurnLatch && Math.abs(rightStickX) < 0.25) {
-      snapTurnLatch = false;
-    }
+  const menuPressed = Boolean(leftSource?.gamepad?.buttons?.[4]?.pressed);
+  if (menuPressed && !menuButtonLatch) {
+    vrUiVisible = !vrUiVisible;
+    if (vrUiVisible) showVrUi(); else hideVrUi();
   }
+  menuButtonLatch = menuPressed;
+
+  const rightStickX = rightSource?.gamepad?.axes?.[2] ?? rightSource?.gamepad?.axes?.[0] ?? 0;
+  if (!snapTurnLatch && Math.abs(rightStickX) > SNAP_TURN_THRESHOLD) {
+    const delta = rightStickX > 0 ? -SNAP_TURN_ANGLE : SNAP_TURN_ANGLE;
+    if (sphereMesh.visible) sphereMesh.rotation.y += delta;
+    if (panoMesh.visible) panoMesh.rotation.y += delta;
+    snapTurnLatch = true;
+  } else if (snapTurnLatch && Math.abs(rightStickX) < 0.25) {
+    snapTurnLatch = false;
+  }
+}
+
+function handleController(controller) {
   tempMatrix.identity().extractRotation(controller.matrixWorld);
   raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);

@@ -79,6 +79,8 @@ function setupEnterVrButton() {
 
   renderer.xr.addEventListener('sessionstart', () => {
     uiCard.classList.add('hidden');
+    vrUiVisible = false;
+    hideVrUi();
     showGallery();
   });
 
@@ -117,10 +119,7 @@ function setupInputs() {
   folderInput.addEventListener('input', handleInputChange);
   fileInput.addEventListener('change', handleInputChange);
 
-  if (!('webkitdirectory' in folderInput)) {
-    folderInput.disabled = true;
-    folderInput.title = 'Folder selection is not supported in this browser.';
-  }
+  // Some XR browsers support directory picking even if this property check fails.
 }
 
 function mergeFiles(files) {
@@ -261,14 +260,13 @@ function showGallery() {
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = true;
   });
-  showVrUi();
+  if (vrUiVisible) showVrUi();
 }
 
 function setupControllers() {
   for (let i = 0; i < 2; i += 1) {
     const controller = renderer.xr.getController(i);
     controller.addEventListener('selectstart', () => {
-      showVrUi();
       controller.userData.selectPressed = true;
     });
     controller.addEventListener('selectend', () => { controller.userData.selectPressed = false; });
@@ -312,7 +310,7 @@ function createGallery(files) {
     scene.add(mesh);
     interactiveObjects.push(mesh);
   });
-  showVrUi();
+  if (vrUiVisible) showVrUi();
 }
 
 function clearGallery() {
@@ -418,6 +416,16 @@ function animate() {
 }
 
 function handleController(controller) {
+  if (renderer.xr.isPresenting) {
+    const session = renderer.xr.getSession();
+    const source = session?.inputSources?.[controller.userData.index];
+    const pressed = !!source?.gamepad?.buttons?.[4]?.pressed;
+    if (source?.handedness === 'left' && pressed && !controller.userData.menuPressed) {
+      vrUiVisible = !vrUiVisible;
+      if (vrUiVisible) showVrUi(); else hideVrUi();
+    }
+    controller.userData.menuPressed = pressed;
+  }
   tempMatrix.identity().extractRotation(controller.matrixWorld);
   raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);

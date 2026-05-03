@@ -10,6 +10,7 @@ let sphereMesh;
 let panoMaterial;
 let backButton;
 let menuButton;
+let browseButton;
 let controllerPointers = [];
 let stereoSphereMaterial;
 let panoStereoMode = 0;
@@ -85,16 +86,15 @@ function setupEnterVrButton() {
     menuButtonLatch = false;
     snapTurnLatch = false;
 
-    if (loadedFiles.length) {
-      createGallery(loadedFiles);
-      showVrUi();
-    }
+    createGallery(loadedFiles);
+    showVrUi();
   });
 
   renderer.xr.addEventListener('sessionend', () => {
     uiCard.style.display = 'flex';
     backButton.visible = false;
     menuButton.visible = false;
+    browseButton.visible = false;
   });
 }
 
@@ -174,6 +174,7 @@ function fileKey(file) {
 }
 
 function setupDemoPicturesButton() {
+  if (!demoPicturesButton) return;
   demoPicturesButton.addEventListener('click', () => {
     loadedFiles = [...demoImages];
     updateFileCount(true);
@@ -181,19 +182,25 @@ function setupDemoPicturesButton() {
 }
 
 function setupClearButton() {
+  if (!clearFilesButton) return;
   clearFilesButton.addEventListener('click', () => {
     loadedFiles = [];
     clearGallery();
     showGallery();
     fileCount.textContent = '0 image files loaded';
-    enterVrButton.disabled = true;
+    enterVrButton.disabled = immersiveVrSupported === false;
   });
 }
 
 function updateFileCount(isDemo = false) {
   const count = loadedFiles.length;
   fileCount.textContent = `${count} ${isDemo ? 'demo image' : 'image file'}${count === 1 ? '' : 's'} loaded`;
-  enterVrButton.disabled = count === 0 || immersiveVrSupported === false;
+  enterVrButton.disabled = immersiveVrSupported === false;
+
+  if (renderer.xr.isPresenting) {
+    createGallery(loadedFiles);
+    showGallery();
+  }
 }
 
 function isImageFile(file) {
@@ -319,26 +326,32 @@ function roundRect(ctx, x, y, w, h, r) {
 }
 
 function createUiButtonsInVr() {
-  backButton = createTextButton('Back', -0.5, 1.15, -1);
+  backButton = createTextButton('Back', -0.52, 1.15, -1);
   backButton.visible = false;
   backButton.userData.onClick = showGallery;
 
-  menuButton = createTextButton('Menu', 0, 1.15, -1);
+  menuButton = createTextButton('Menu', -0.12, 1.15, -1);
   menuButton.visible = false;
   menuButton.userData.onClick = exitToUploadScreen;
 
-  [backButton, menuButton].forEach((b) => {
+  browseButton = createTextButton('Browse', 0.3, 1.15, -1);
+  browseButton.visible = false;
+  browseButton.userData.onClick = () => {
+    fileInput.click();
+  };
+
+  [backButton, menuButton, browseButton].forEach((b) => {
     scene.add(b);
     interactiveObjects.push(b);
   });
 }
 
 function hideVrUi() {
-  [backButton, menuButton].forEach((b) => { b.visible = false; });
+  [backButton, menuButton, browseButton].forEach((b) => { b.visible = false; });
   controllerPointers.forEach((pointer) => { pointer.visible = false; });
 }
 function showVrUi() {
-  [backButton, menuButton].forEach((b) => { b.visible = true; });
+  [backButton, menuButton, browseButton].forEach((b) => { b.visible = true; });
   controllerPointers.forEach((pointer) => { pointer.visible = true; });
 }
 
@@ -357,7 +370,7 @@ function showGallery() {
   interactiveObjects.forEach((obj) => {
     if (obj.userData.isThumb) obj.visible = true;
   });
-  [backButton, menuButton].forEach((b) => { b.visible = false; });
+  [backButton, menuButton, browseButton].forEach((b) => { b.visible = false; });
   controllerPointers.forEach((pointer) => { pointer.visible = true; });
 }
 
@@ -435,15 +448,16 @@ function createGallery(files) {
 function clearGallery() {
   galleryBuildId += 1;
   interactiveObjects.forEach((obj) => {
-    if (obj !== backButton && obj !== menuButton) {
+    if (obj !== backButton && obj !== menuButton && obj !== browseButton) {
       scene.remove(obj);
       obj.material?.map?.dispose?.();
       obj.material?.dispose?.();
       obj.geometry?.dispose?.();
     }
   });
-  interactiveObjects = [backButton, menuButton];
+  interactiveObjects = [backButton, menuButton, browseButton];
 }
+
 
 async function loadImageElement(file) {
   const image = new Image();

@@ -403,28 +403,66 @@ function setupHands() {
 function createGallery(files) {
   clearGallery();
   const buildId = ++galleryBuildId;
-  const radius = 2.5;
+  const count = files.length;
+
   files.forEach(async (file, index) => {
-    const n = Math.max(files.length, 1);
-    const phi = Math.acos(1 - (2 * (index + 0.5) / n));
-    const theta = Math.PI * (1 + Math.sqrt(5)) * (index + 0.5);
     const texture = await createThumbnail(file);
     if (buildId !== galleryBuildId) {
       texture.dispose();
       return;
     }
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.4), new THREE.MeshBasicMaterial({ map: texture }));
-    mesh.position.set(
-      Math.cos(theta) * Math.sin(phi) * radius,
-      1.5 + (Math.cos(phi) * radius * 0.55),
-      Math.sin(theta) * Math.sin(phi) * radius
+
+    const mesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.65, 0.43),
+      new THREE.MeshBasicMaterial({ map: texture })
     );
-    mesh.lookAt(0, 1.5, 0);
+
+    let x, y, z;
+
+    // === FRONT-FIRST LAYOUT ===
+    // First 6 thumbnails: nice curved row directly in front of user
+    if (index < 6) {
+      const frontCount = Math.min(6, count);
+      const frontIndex = index;
+
+      // Gentle arc in front of user (comfortable viewing angle)
+      const spread = 1.8; // total width of front row
+      const xPos = (frontIndex - (frontCount - 1) / 2) * (spread / Math.max(frontCount - 1, 1));
+
+      x = xPos * 0.9;
+      y = 1.35;                    // slightly below eye level (easy to point at)
+      z = -2.8;                    // comfortable distance in front
+
+      // Subtle curve so edges are angled toward user
+      const curveAmount = Math.abs(frontIndex - (frontCount - 1) / 2) * 0.08;
+      mesh.rotation.y = -xPos * 0.12; // tilt slightly toward center
+      mesh.position.set(x, y + curveAmount * 0.3, z);
+
+    } else {
+      // Remaining thumbnails: scatter gently around sides and back
+      const remainingIndex = index - 6;
+      const remainingCount = count - 6;
+
+      const radius = 2.7;
+      // Start from left side and wrap around (avoid directly behind user)
+      const angleStart = -1.2; // ~ -70 degrees (left side)
+      const angleRange = 2.4;  // 140 degrees total (left → right, avoiding full back)
+      const angle = angleStart + (remainingIndex / Math.max(remainingCount - 1, 1)) * angleRange;
+
+      x = Math.sin(angle) * radius;
+      z = Math.cos(angle) * radius - 0.8; // push slightly forward from pure back
+      y = 1.45 + (Math.sin(remainingIndex * 0.7) * 0.25); // gentle height variation
+
+      mesh.position.set(x, y, z);
+      mesh.lookAt(0, 1.4, 0);
+    }
+
     mesh.userData.onClick = () => loadImage(file);
     mesh.userData.isThumb = true;
     scene.add(mesh);
     interactiveObjects.push(mesh);
   });
+
   if (vrUiVisible) showVrUi();
 }
 

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
-// === CORE ===
+// === CORE VARIABLES ===
 let scene, camera, renderer;
 let panoMesh, sphereMesh, panoMaterial, stereoSphereMaterial;
 let backButton, menuButton, controllerPointers = [];
@@ -22,6 +22,8 @@ const tempMatrix = new THREE.Matrix4();
 const fileInput = document.getElementById('fileInput');
 const uiCard = document.getElementById('ui');
 const enterVrButton = document.getElementById('enterVrButton');
+const loadingText = document.getElementById('loading');
+const fileCount = document.getElementById('fileCount');
 
 // === INIT ===
 init();
@@ -50,7 +52,7 @@ function init() {
   window.addEventListener('resize', onWindowResize);
 }
 
-// === VR BUTTONS ===
+// === VR BUTTONS (Back + Menu) ===
 function createVrButtons() {
   backButton = createTextButton('Back', -0.5, 1.15, -1);
   backButton.visible = false;
@@ -130,13 +132,12 @@ function setupHands() {
   }
 }
 
-// === FILE INPUT (works on 2D page and in VR) ===
+// === FILE INPUT ===
 function setupFileInput() {
   fileInput.addEventListener('change', async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Show converting UI
     showConversionScreen(file.name);
 
     try {
@@ -149,38 +150,30 @@ function setupFileInput() {
   });
 }
 
-function isVrFile(name) {
-  return name.toLowerCase().includes('.vr.');
-}
-
-// === CONVERSION ===
+// === CONVERSION (works on 2D page) ===
 async function convertImage(file) {
   updateLog('Loading image...');
   updateProgress(15);
 
-  // Load image
   const img = await loadImageAsync(file);
   updateLog('Image loaded (' + img.width + 'x' + img.height + ')');
   updateProgress(35);
 
-  // Try to extract 3D right eye
+  // Extract 3D right eye
   updateLog('Looking for 3D data...');
   let rightEye = null;
   try {
     rightEye = await extractRightEye(file);
   } catch (e) {
-    updateLog('3D extraction error (continuing as 2D)');
+    updateLog('3D extraction failed (continuing as 2D)');
   }
 
   const has3D = !!rightEye;
-  if (has3D) {
-    updateLog('3D data found ✓');
-  } else {
-    updateLog('No 3D data - viewing as 360');
-  }
+  if (has3D) updateLog('3D data found ✓');
+  else updateLog('No 3D data - viewing as 360');
   updateProgress(55);
 
-  // Try to extract audio
+  // Extract audio
   updateLog('Checking for audio...');
   let audioUrl = null;
   try {
@@ -205,7 +198,6 @@ async function convertImage(file) {
   const ratio = img.width / img.height;
   const isEquirect = ratio > 1.85 && ratio < 2.15;
 
-  // Render mode
   if (has3D) {
     updateLog('Creating top/bottom 3D view...');
     const stereoCanvas = createTopBottomStereo(img, rightEye);
@@ -216,7 +208,7 @@ async function convertImage(file) {
     panoMesh.visible = true;
     sphereMesh.visible = false;
     panoMaterial.uniforms.map.value = stereoTex;
-    panoMaterial.uniforms.stereoMode.value = -1; // Top/Bottom
+    panoMaterial.uniforms.stereoMode.value = -1;
     panoMesh.scale.y = 1;
 
   } else if (isEquirect) {
@@ -240,17 +232,13 @@ async function convertImage(file) {
 
   currentImageFile = file;
 
-  // Wait a moment then show view button
   setTimeout(() => {
     hideConversionScreen();
     showViewButton();
-  }, 700);
+  }, 600);
 
-  // Auto-play audio if present
   if (currentAudio) {
-    currentAudio.play().catch(() => {
-      updateLog('Tap screen to play audio');
-    });
+    currentAudio.play().catch(() => {});
   }
 }
 
@@ -258,10 +246,7 @@ function loadImageAsync(file) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const url = URL.createObjectURL(file);
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(img);
-    };
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
     img.onerror = reject;
     img.src = url;
   });
@@ -279,10 +264,7 @@ async function extractRightEye(file) {
   ];
 
   let match = null;
-  for (const p of patterns) {
-    match = txt.match(p);
-    if (match) break;
-  }
+  for (const p of patterns) { match = txt.match(p); if (match) break; }
   if (!match) return null;
 
   let b64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
@@ -294,11 +276,7 @@ async function extractRightEye(file) {
   const url = URL.createObjectURL(blob);
 
   const img = new Image();
-  await new Promise((res, rej) => {
-    img.onload = res;
-    img.onerror = rej;
-    img.src = url;
-  });
+  await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = url; });
   URL.revokeObjectURL(url);
   return img;
 }
@@ -337,31 +315,24 @@ let logBox = null;
 
 function showConversionScreen(filename) {
   hideAllScreens();
-
   conversionScreen = document.createElement('div');
   conversionScreen.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,7,15,0.98);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif;';
   conversionScreen.innerHTML = `
     <div style="width:90%;max-width:420px;text-align:center;">
       <div style="font-size:1.3rem;margin-bottom:24px;">Converting to 3D</div>
       <div style="color:#9aa4c2;margin-bottom:8px;font-size:0.9rem;">${filename}</div>
-      
       <div style="background:#1a2338;border-radius:9999px;height:10px;margin:20px 0;overflow:hidden;">
         <div id="prog-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4f8cff,#7ba3ff);transition:width .25s ease;"></div>
       </div>
-      
       <div id="log-box" style="background:#0f1629;border:1px solid #334155;border-radius:10px;padding:12px;height:150px;overflow-y:auto;font-family:monospace;font-size:12px;text-align:left;color:#9aa4c2;"></div>
     </div>
   `;
   document.body.appendChild(conversionScreen);
-
   progressBar = document.getElementById('prog-bar');
   logBox = document.getElementById('log-box');
 }
 
-function updateProgress(pct) {
-  if (progressBar) progressBar.style.width = pct + '%';
-}
-
+function updateProgress(pct) { if (progressBar) progressBar.style.width = pct + '%'; }
 function updateLog(msg) {
   if (!logBox) return;
   const line = document.createElement('div');
@@ -370,17 +341,10 @@ function updateLog(msg) {
   logBox.appendChild(line);
   logBox.scrollTop = logBox.scrollHeight;
 }
-
-function hideConversionScreen() {
-  if (conversionScreen) {
-    conversionScreen.remove();
-    conversionScreen = null;
-  }
-}
+function hideConversionScreen() { if (conversionScreen) { conversionScreen.remove(); conversionScreen = null; } }
 
 function showViewButton() {
   hideAllScreens();
-
   const screen = document.createElement('div');
   screen.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,7,15,0.95);display:flex;align-items:center;justify-content:center;';
   screen.innerHTML = `
@@ -392,41 +356,28 @@ function showViewButton() {
       <button id="view-btn" style="background:#4f8cff;color:white;border:none;padding:18px 50px;border-radius:14px;font-size:1.15rem;font-weight:700;box-shadow:0 10px 30px rgba(79,140,255,0.4);">
         View 3D Panorama
       </button>
-      <div style="margin-top:16px;color:#64748b;font-size:0.85rem;">Tap to enter VR view</div>
     </div>
   `;
   document.body.appendChild(screen);
-
-  document.getElementById('view-btn').onclick = () => {
-    screen.remove();
-    enterViewingMode();
-  };
+  document.getElementById('view-btn').onclick = () => { screen.remove(); enterViewingMode(); };
 }
 
 function enterViewingMode() {
   isViewingImage = true;
   panoMesh.visible = true;
   sphereMesh.visible = false;
-
   backButton.visible = true;
   menuButton.visible = true;
-
-  if (currentAudio) {
-    currentAudio.play().catch(() => {});
-  }
+  if (currentAudio) currentAudio.play().catch(() => {});
 }
 
 function returnToUpload() {
-  if (currentAudio) {
-    currentAudio.pause();
-    currentAudio = null;
-  }
+  if (currentAudio) { currentAudio.pause(); currentAudio = null; }
   panoMesh.visible = false;
   sphereMesh.visible = false;
   isViewingImage = false;
   backButton.visible = false;
   menuButton.visible = false;
-
   uiCard.classList.remove('hidden');
 }
 
@@ -441,16 +392,8 @@ function showMenu() {
     </div>
   `;
   document.body.appendChild(m);
-
-  document.getElementById('m-return').onclick = () => {
-    m.remove();
-    returnToUpload();
-  };
-  document.getElementById('m-exit').onclick = () => {
-    const s = renderer.xr.getSession();
-    if (s) s.end();
-    m.remove();
-  };
+  document.getElementById('m-return').onclick = () => { m.remove(); returnToUpload(); };
+  document.getElementById('m-exit').onclick = () => { const s = renderer.xr.getSession(); if (s) s.end(); m.remove(); };
 }
 
 function showError(msg) {
@@ -518,7 +461,7 @@ function createSphereMesh() {
   scene.add(sphereMesh);
 }
 
-// === INPUT ===
+// === INPUT HANDLING ===
 function handleXrInput() {
   if (!renderer.xr.isPresenting) return;
   const session = renderer.xr.getSession();
@@ -558,20 +501,19 @@ function animate() {
   });
 }
 
+// === VR SESSION (RESTORED FROM ORIGINAL WORKING VERSION) ===
 function setupEnterVrButton() {
-  enterVrButton.addEventListener('click', async () => {
-    if (!immersiveVrSupported) return;
-    try {
-      const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
-      renderer.xr.setSession(session);
-      uiCard.classList.add('hidden');
-    } catch (e) {
-      alert('Could not enter VR: ' + e.message);
-    }
+  enterVrButton.addEventListener('click', () => {
+    startVrSession();
   });
 
-  renderer.xr.addEventListener('sessionstart', () => uiCard.classList.add('hidden'));
-  renderer.xr.addEventListener('sessionend', () => uiCard.classList.remove('hidden'));
+  renderer.xr.addEventListener('sessionstart', () => {
+    uiCard.classList.add('hidden');
+  });
+
+  renderer.xr.addEventListener('sessionend', () => {
+    uiCard.classList.remove('hidden');
+  });
 }
 
 async function detectVrSupport() {
@@ -579,16 +521,35 @@ async function detectVrSupport() {
     immersiveVrSupported = false;
     enterVrButton.disabled = true;
     enterVrButton.textContent = 'WebXR Not Available';
-    return;
+    return false;
   }
+
   try {
     immersiveVrSupported = await navigator.xr.isSessionSupported('immersive-vr');
   } catch {
     immersiveVrSupported = false;
   }
+
   if (!immersiveVrSupported) {
     enterVrButton.disabled = true;
     enterVrButton.textContent = 'VR Not Supported Here';
+  }
+
+  return immersiveVrSupported;
+}
+
+async function startVrSession() {
+  const supported = immersiveVrSupported === null ? await detectVrSupport() : immersiveVrSupported;
+  if (!navigator.xr || !supported) return;
+
+  try {
+    const session = await navigator.xr.requestSession('immersive-vr', {
+      optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor']
+    });
+    renderer.xr.setSession(session);
+  } catch (error) {
+    console.error('Failed to start VR session:', error);
+    alert('Could not start VR: ' + (error?.message || 'unknown error'));
   }
 }
 

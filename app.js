@@ -75,23 +75,19 @@ function init() {
 
 function setupEnterVrButton() {
   enterVrButton.addEventListener('click', () => {
-    if (!loadedFiles.length) return;
-    createGallery(loadedFiles);
     startVrSession();
   });
 
   renderer.xr.addEventListener('sessionstart', () => {
-    uiCard.classList.add('hidden');
-    vrUiVisible = false;
-    hideVrUi();
-    showGallery();
+    uiCard.style.display = 'none';
   });
 
   renderer.xr.addEventListener('sessionend', () => {
-    uiCard.classList.remove('hidden');
-    hideVrUi();
+    uiCard.style.display = 'flex';
+    backButton.visible = false;
+    menuButton.visible = false;
+    isViewingImage = false;
   });
-
 }
 
 async function detectVrSupport() {
@@ -99,7 +95,6 @@ async function detectVrSupport() {
     immersiveVrSupported = false;
     enterVrButton.disabled = true;
     enterVrButton.textContent = 'WebXR Not Available';
-    fileCount.textContent = 'Open this app in Quest Browser over HTTPS or localhost.';
     return false;
   }
 
@@ -112,25 +107,25 @@ async function detectVrSupport() {
   if (!immersiveVrSupported) {
     enterVrButton.disabled = true;
     enterVrButton.textContent = 'VR Not Supported Here';
-    fileCount.textContent = 'Immersive VR is unavailable in this browser/context.';
+  } else {
+    enterVrButton.disabled = false;
   }
 
   return immersiveVrSupported;
 }
 
 async function startVrSession() {
-  if (!navigator.xr) {
-    alert('WebXR not available in this browser');
-    return;
-  }
+  const supported = immersiveVrSupported === null ? await detectVrSupport() : immersiveVrSupported;
+  if (!navigator.xr || !supported) return;
 
   try {
-    // Simplified - only request immersive-vr, no extra features
-    const session = await navigator.xr.requestSession('immersive-vr');
+    const session = await navigator.xr.requestSession('immersive-vr', {
+      optionalFeatures: ['hand-tracking', 'local-floor', 'bounded-floor']
+    });
     renderer.xr.setSession(session);
   } catch (error) {
-    console.error('Failed to start VR:', error);
-    alert('Could not enter VR.\n\nTry:\n• Make sure you are in the Quest Browser (not the main browser)\n• Allow VR permissions if prompted\n• Reload the page and try again\n\nError: ' + (error?.message || 'unknown'));
+    console.error('Failed to start VR session:', error);
+    alert('Could not enter VR: ' + (error?.message || 'unknown error'));
   }
 }
 

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
-// === CORE VARIABLES ===
+// === CORE ===
 let scene, camera, renderer;
 let panoMesh, sphereMesh, panoMaterial, stereoSphereMaterial;
 let backButton, menuButton, controllerPointers = [];
@@ -11,10 +11,6 @@ let currentImageFile = null;
 let currentAudio = null;
 let isViewingImage = false;
 let immersiveVrSupported = null;
-let menuButtonLatch = false;
-let snapTurnLatch = false;
-const SNAP_TURN_ANGLE = THREE.MathUtils.degToRad(30);
-const SNAP_TURN_THRESHOLD = 0.65;
 
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
@@ -22,8 +18,6 @@ const tempMatrix = new THREE.Matrix4();
 const fileInput = document.getElementById('fileInput');
 const uiCard = document.getElementById('ui');
 const enterVrButton = document.getElementById('enterVrButton');
-const loadingText = document.getElementById('loading');
-const fileCount = document.getElementById('fileCount');
 
 // === INIT ===
 init();
@@ -52,7 +46,7 @@ function init() {
   window.addEventListener('resize', onWindowResize);
 }
 
-// === VR BUTTONS (Back + Menu) ===
+// === VR BUTTONS ===
 function createVrButtons() {
   backButton = createTextButton('Back', -0.5, 1.15, -1);
   backButton.visible = false;
@@ -150,7 +144,7 @@ function setupFileInput() {
   });
 }
 
-// === CONVERSION (works on 2D page) ===
+// === CONVERSION ===
 async function convertImage(file) {
   updateLog('Loading image...');
   updateProgress(15);
@@ -159,7 +153,6 @@ async function convertImage(file) {
   updateLog('Image loaded (' + img.width + 'x' + img.height + ')');
   updateProgress(35);
 
-  // Extract 3D right eye
   updateLog('Looking for 3D data...');
   let rightEye = null;
   try {
@@ -173,7 +166,6 @@ async function convertImage(file) {
   else updateLog('No 3D data - viewing as 360');
   updateProgress(55);
 
-  // Extract audio
   updateLog('Checking for audio...');
   let audioUrl = null;
   try {
@@ -190,7 +182,6 @@ async function convertImage(file) {
   }
   updateProgress(75);
 
-  // Prepare texture
   const tex = new THREE.Texture(img);
   tex.needsUpdate = true;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -235,6 +226,9 @@ async function convertImage(file) {
   setTimeout(() => {
     hideConversionScreen();
     showViewButton();
+    // FORCE ENABLE VR BUTTON
+    enterVrButton.disabled = false;
+    enterVrButton.textContent = 'Enter VR';
   }, 600);
 
   if (currentAudio) {
@@ -345,6 +339,10 @@ function hideConversionScreen() { if (conversionScreen) { conversionScreen.remov
 
 function showViewButton() {
   hideAllScreens();
+  
+  // HIDE the upload menu
+  uiCard.style.display = 'none';
+
   const screen = document.createElement('div');
   screen.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,7,15,0.95);display:flex;align-items:center;justify-content:center;';
   screen.innerHTML = `
@@ -356,18 +354,26 @@ function showViewButton() {
       <button id="view-btn" style="background:#4f8cff;color:white;border:none;padding:18px 50px;border-radius:14px;font-size:1.15rem;font-weight:700;box-shadow:0 10px 30px rgba(79,140,255,0.4);">
         View 3D Panorama
       </button>
+      <div style="margin-top:16px;color:#64748b;font-size:0.85rem;">Tap to enter VR view</div>
     </div>
   `;
   document.body.appendChild(screen);
-  document.getElementById('view-btn').onclick = () => { screen.remove(); enterViewingMode(); };
+
+  document.getElementById('view-btn').onclick = () => {
+    screen.remove();
+    enterViewingMode();
+  };
 }
 
 function enterViewingMode() {
   isViewingImage = true;
   panoMesh.visible = true;
   sphereMesh.visible = false;
+  
+  // Show VR navigation buttons
   backButton.visible = true;
   menuButton.visible = true;
+  
   if (currentAudio) currentAudio.play().catch(() => {});
 }
 
@@ -378,7 +384,9 @@ function returnToUpload() {
   isViewingImage = false;
   backButton.visible = false;
   menuButton.visible = false;
-  uiCard.classList.remove('hidden');
+  
+  // Show upload menu again
+  uiCard.style.display = 'flex';
 }
 
 function showMenu() {
@@ -461,7 +469,7 @@ function createSphereMesh() {
   scene.add(sphereMesh);
 }
 
-// === INPUT HANDLING ===
+// === INPUT ===
 function handleXrInput() {
   if (!renderer.xr.isPresenting) return;
   const session = renderer.xr.getSession();
@@ -501,18 +509,23 @@ function animate() {
   });
 }
 
-// === VR SESSION (RESTORED FROM ORIGINAL WORKING VERSION) ===
+// === VR SESSION ===
 function setupEnterVrButton() {
   enterVrButton.addEventListener('click', () => {
     startVrSession();
   });
 
   renderer.xr.addEventListener('sessionstart', () => {
-    uiCard.classList.add('hidden');
+    uiCard.style.display = 'none';
+    backButton.visible = false;
+    menuButton.visible = false;
   });
 
   renderer.xr.addEventListener('sessionend', () => {
-    uiCard.classList.remove('hidden');
+    uiCard.style.display = 'flex';
+    backButton.visible = false;
+    menuButton.visible = false;
+    isViewingImage = false;
   });
 }
 
@@ -533,14 +546,18 @@ async function detectVrSupport() {
   if (!immersiveVrSupported) {
     enterVrButton.disabled = true;
     enterVrButton.textContent = 'VR Not Supported Here';
+  } else {
+    enterVrButton.disabled = false;
   }
 
   return immersiveVrSupported;
 }
 
 async function startVrSession() {
-  const supported = immersiveVrSupported === null ? await detectVrSupport() : immersiveVrSupported;
-  if (!navigator.xr || !supported) return;
+  if (!navigator.xr) {
+    alert('WebXR not available');
+    return;
+  }
 
   try {
     const session = await navigator.xr.requestSession('immersive-vr', {
@@ -548,8 +565,8 @@ async function startVrSession() {
     });
     renderer.xr.setSession(session);
   } catch (error) {
-    console.error('Failed to start VR session:', error);
-    alert('Could not start VR: ' + (error?.message || 'unknown error'));
+    console.error('Failed to start VR:', error);
+    alert('Could not enter VR: ' + (error?.message || 'unknown error'));
   }
 }
 

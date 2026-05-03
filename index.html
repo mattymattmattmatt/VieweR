@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Pano VieweR " Immersive 360° Panoramas</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%2300f0ff'/%3E%3Cpath d='M30 35 Q50 20 70 35' fill='none' stroke='%23ff6b00' stroke-width='8'/%3E%3C/svg%3E">
+</head>
+<body>
+    <!-- Navbar -->
+    <nav>
+        <div class="nav-logo">
+            <img src="3D Pano VieweR Logo.png" alt="3D Pano VieweR Logo">
+            <span>3D Pano VieweR</span>
+        </div>
+        
+        <ul class="nav-links">
+            <li><a href="#features">Features</a></li>
+            <li><a href="#demo">Demo</a></li>
+            <li><a href="#how">How it Works</a></li>
+            <li><a href="#testimonials">Stories</a></li>
+        </ul>
+        
+        <button class="btn btn-primary nav-cta" onclick="document.getElementById('demo').scrollIntoView({ behavior: 'smooth' })">
+            Launch Viewer
+        </button>
+    </nav>
+
+    <!-- Hero -->
+    <section class="hero">
+        <div class="floating-orb orb-1"></div>
+        <div class="floating-orb orb-2"></div>
+        
+        <div class="hero-content">
+            <div class="hero-logo">
+                <img src="3D Pano VieweR Logo.png" alt="3D Pano VieweR" style="max-width: 420px; width: 100%; height: auto;">
+            </div>
+            
+            <h1>Step into <span class="gradient">360° worlds</span></h1>
+            <p>Experience breathtaking panoramas with true 3D depth, real-time lighting, and seamless VR support. The most immersive way to explore our planet  and beyond.</p>
+            
+            <div class="hero-buttons">
+                <button class="btn btn-primary" onclick="document.getElementById('demo').scrollIntoView({ behavior: 'smooth' })">
+                    <span>Try Live Demo</span>
+                </button>
+                <button class="btn btn-secondary" onclick="showVideoModal()">
+                    ¶ Watch 60s Trailer
+                </button>
+            </div>
+            
+            <div class="stats">
+                <div class="stat">
+                    <div class="stat-number">124k</div>
+                    <div class="stat-label">Panoramas Explored</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">47k</div>
+                    <div class="stat-label">Active Creators</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-number">92</div>
+                    <div class="stat-label">Countries Mapped</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="features">
+        <div class="section-header">
+            <h2>Built for the next dimension</h2>
+            <p>Professional-grade tools wrapped in an experience so intuitive, it feels like magic.</p>
+        </div>
+        
+        <div class="feature-grid">
+            <div class="feature-card fade-in">
+                <div class="feature-icon"><</div>
+                <h3>Real-time 3D Rendering</h3>
+                <p>WebGL-powered engine delivers photorealistic lighting, dynamic reflections, and parallax depth in every frame.</p>
+            </div>
+            
+            <div class="feature-card fade-in">
+                <div class="feature-icon">>}</div>
+                <h3>Native VR &amp; AR Ready</h3>
+                <p>Instant WebXR support. Slip on your headset and walk through your panoramas in full stereoscopic 3D.</p>
+            </div>
+            
+            <div class="feature-card fade-in">
+                <div class="feature-icon">=ø</div>
+                <h3>Drag, Zoom, Explore</h3>
+                <p>Intuitive controls with momentum, auto-rotation, and 16× zoom. Feels like you're really there.</p>
+            </div>
+            
+            <div class="feature-card fade-in">
+                <div class="feature-icon"></div>
+                <h3>Upload &amp; Share Instantly</h3>
+                <p>Drop your 360° photos or videos. AI auto-enhances exposure and generates shareable links in seconds.</p>
+            </div>
+            
+            <div class="feature-card fade-in">
+                <div class="feature-icon"><¨</div>
+                <h3>Creative Studio</h3>
+                <p>Add hotspots, annotations, music, and branching narratives. Build interactive tours in minutes.</p>
+            </div>
+            
+            <div class="feature-card fade-in">
+                <div class="feature-icon">¡</div>
+                <h3>Lightning Fast</h3>
+                <p>Optimized for mobile and desktop. 60fps even on low-end devices. Works offline after first load.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Interactive Demo -->
+    <section id="demo" class="demo">
+        <div class="section-header">
+            <h2>Experience it yourself</h2>
+            <p>Drag to look around the sunset cove. Scroll to zoom. Click hotspots for hidden stories.</p>
+        </div>
+        
+        <div class="viewer-wrapper">
+            <div class="viewer-container" id="viewer-container">
+                <canvas id="pano-canvas" width="960" height="520"></canvas>
+                
+                <div class="viewer-overlay"></div>
+                
+                <div class="viewer-label">
+                    <span>LIVE 3D PANO</span>
+                </div>
+                
+                <!-- Hotspot indicators -->
+                <div class="hotspot" style="position:absolute; left:38%; top:52%; width:18px; height:18px; background:rgba(255,107,0,0.9); border-radius:50%; box-shadow:0 0 12px #ff6b00; cursor:pointer; z-index:4;" onclick="showHotspotInfo(0)"></div>
+                <div class="hotspot" style="position:absolute; left:68%; top:38%; width:18px; height:18px; background:rgba(0,240,255,0.9); border-radius:50%; box-shadow:0 0 12px #00f0ff; cursor:pointer; z-index:4;" onclick="showHotspotInfo(1)"></div>
+                <div class="hotspot" style="position:absolute; left:22%; top:64%; width:18px; height:18px; background:rgba(123,44,191,0.9); border-radius:50%; box-shadow:0 0 12px #7b2cbf; cursor:pointer; z-index:4;" onclick="showHotspotInfo(2)"></div>
+            </div>
+            
+            <div class="controls">
+                <button class="control-btn" id="auto-rotate-btn" onclick="toggleAutoRotate()">
+                    <span id="rotate-text">ø Pause Rotation</span>
+                </button>
+                
+                <div class="slider-container">
+                    <label>Speed</label>
+                    <input type="range" id="speed-slider" min="0.2" max="3" step="0.1" value="1" oninput="updateSpeed()">
+                </div>
+                
+                <button class="control-btn" onclick="resetView()">
+                    ò Reset View
+                </button>
+                
+                <button class="control-btn" onclick="enterFullscreen()">
+                    ö Fullscreen
+                </button>
+                
+                <button class="control-btn" onclick="toggleStereo()">
+                    =S 3D Stereo
+                </button>
+            </div>
+        </div>
+        
+        <p style="text-align:center; margin-top:1.5rem; color:#666; font-size:0.9rem;">Pro tip: Move your mouse over the viewer for a subtle 3D tilt effect</p>
+    </section>
+
+    <!-- How it Works -->
+    <section id="how" class="how-it-works">
+        <div class="section-header">
+            <h2>From photo to presence in 3 clicks</h2>
+            <p>Our proprietary pipeline turns any 360° capture into a living, breathing world.</p>
+        </div>
+        
+        <div class="steps">
+            <div class="step fade-in">
+                <div class="step-number">01</div>
+                <h3>Upload your panorama</h3>
+                <p>Drag &amp; drop equirectangular photos, videos, or even AI-generated scenes. We support 8K+ resolution.</p>
+            </div>
+            
+            <div class="step fade-in">
+                <div class="step-number">02</div>
+                <h3>AI depth &amp; lighting</h3>
+                <p>Our neural engine analyzes depth, reconstructs 3D geometry, and adds realistic volumetric lighting in under 8 seconds.</p>
+            </div>
+            
+            <div class="step fade-in">
+                <div class="step-number">03</div>
+                <h3>Share &amp; embed</h3>
+                <p>Instant link, embed code, or native VR app export. Your audience can explore on any device  no app install needed.</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Testimonials -->
+    <section id="testimonials" class="testimonials">
+        <div class="section-header">
+            <h2>Loved by explorers &amp; storytellers</h2>
+        </div>
+        
+        <div class="testimonial-grid">
+            <div class="testimonial fade-in">
+                <div class="testimonial-text">"The most realistic 360 experience I've ever seen. Our virtual museum tours now feel like you're actually walking through the galleries."</div>
+                <div class="testimonial-author">
+                    <div class="author-avatar">DR</div>
+                    <div class="author-info">
+                        <h4>Dr. Elena Vargas</h4>
+                        <span>Curator, Louvre Digital</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="testimonial fade-in">
+                <div class="testimonial-text">"We use 3D Pano VieweR for all our real estate listings. Conversion rates jumped 340%. Clients say it feels like they're already inside the homes."</div>
+                <div class="testimonial-author">
+                    <div class="author-avatar">MK</div>
+                    <div class="author-info">
+                        <h4>Marcus Kline</h4>
+                        <span>CEO, Horizon Realty</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="testimonial fade-in">
+                <div class="testimonial-text">"As a National Geographic photographer, I finally have a platform that does justice to my 360° work. The depth and lighting are insane."</div>
+                <div class="testimonial-author">
+                    <div class="author-avatar">SJ</div>
+                    <div class="author-info">
+                        <h4>Sofia Jensen</h4>
+                        <span>Explorer &amp; Photographer</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Final CTA -->
+    <section class="final-cta">
+        <h2>Ready to explore new worlds?</h2>
+        <p>Join 47,000 creators building the future of immersive storytelling.</p>
+        
+        <div class="cta-buttons">
+            <button class="btn btn-primary" style="font-size:1.1rem; padding:1.1rem 2.8rem;" onclick="document.getElementById('demo').scrollIntoView({ behavior: 'smooth' })">
+                Start Free Trial
+            </button>
+            <button class="btn btn-secondary" style="font-size:1.1rem; padding:1.1rem 2.4rem;" onclick="window.location.href='#'">
+                View Pricing
+            </button>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer>
+        <div class="footer-content">
+            <div class="footer-logo">
+                <img src="3D Pano VieweR Logo.png" alt="Logo" style="height: 28px;">
+                <span style="font-weight:700; font-size:1.1rem;">3D Pano VieweR</span>
+            </div>
+            
+            <p>© 2026 3D Pano VieweR. Crafted with d for the immersive web.</p>
+            
+            <div class="social-links">
+                <a href="#" aria-label="Twitter">5O</a>
+                <a href="#" aria-label="Instagram">=÷</a>
+                <a href="#" aria-label="Discord">=¬</a>
+                <a href="#" aria-label="YouTube">¶</a>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Video Modal -->
+    <div id="video-modal" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.92); z-index:2000; align-items:center; justify-content:center;" onclick="hideVideoModal()">
+        <div style="max-width:860px; width:90%; background:#111; border-radius:20px; overflow:hidden; box-shadow:0 0 80px rgba(0,240,255,0.3);" onclick="event.stopImmediatePropagation()">
+            <div style="padding:1.5rem 2rem; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #222;">
+                <h3 style="margin:0; color:#fff;">3D Pano VieweR  Official Trailer</h3>
+                <button onclick="hideVideoModal()" style="background:none; border:none; color:#888; font-size:1.8rem; cursor:pointer;">×</button>
+            </div>
+            <div style="position:relative; padding-bottom:56.25%; height:0; background:#000;">
+                <div style="position:absolute; top:0; left:0; width:100%; height:100%; display:flex; align-items:center; justify-content:center; flex-direction:column; color:#666;">
+                    <div style="font-size:4rem; margin-bottom:1rem;"><¥</div>
+                    <p style="font-size:1.1rem;">Trailer video would play here in production</p>
+                    <p style="font-size:0.85rem; margin-top:0.5rem;">(Demo mode  imagine epic cinematic shots of people exploring 360° worlds)</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

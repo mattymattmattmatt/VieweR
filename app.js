@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
-// === CORE VARIABLES ===
+// === CORE ===
 let scene, camera, renderer;
 let panoMesh, sphereMesh, panoMaterial, stereoSphereMaterial;
 let backButton, menuButton, controllerPointers = [];
@@ -10,8 +10,6 @@ let interactiveObjects = [];
 let currentImageFile = null;
 let currentAudio = null;
 let isViewingImage = false;
-let activeObjectUrl = null;
-let vrUiVisible = false;
 let immersiveVrSupported = null;
 let menuButtonLatch = false;
 let snapTurnLatch = false;
@@ -24,14 +22,6 @@ const tempMatrix = new THREE.Matrix4();
 const fileInput = document.getElementById('fileInput');
 const uiCard = document.getElementById('ui');
 const enterVrButton = document.getElementById('enterVrButton');
-const loadingText = document.getElementById('loading');
-const fileCount = document.getElementById('fileCount');
-
-// === UI STATE ===
-let conversionUI = null;
-let viewButton = null;
-let logContainer = null;
-let progressFill = null;
 
 // === INIT ===
 init();
@@ -53,14 +43,14 @@ function init() {
 
   setupControllers();
   setupHands();
-  setupInputs();
+  setupFileInput();
   setupEnterVrButton();
   detectVrSupport();
 
   window.addEventListener('resize', onWindowResize);
 }
 
-// === VR BUTTONS (Back + Menu) ===
+// === VR BUTTONS ===
 function createVrButtons() {
   backButton = createTextButton('Back', -0.5, 1.15, -1);
   backButton.visible = false;
@@ -68,7 +58,7 @@ function createVrButtons() {
 
   menuButton = createTextButton('Menu', 0, 1.15, -1);
   menuButton.visible = false;
-  menuButton.userData.onClick = toggleMenu;
+  menuButton.userData.onClick = showMenu;
 
   [backButton, menuButton].forEach(b => {
     scene.add(b);
@@ -140,161 +130,197 @@ function setupHands() {
   }
 }
 
-// === FILE INPUT ===
-function setupInputs() {
+// === FILE INPUT (works on 2D page and in VR) ===
+function setupFileInput() {
   fileInput.addEventListener('change', async (e) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-    const file = files[0];
-    if (!isImageFile(file)) {
-      alert('Please select a .jpg or .vr.jpg image');
-      return;
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Show converting UI
+    showConversionScreen(file.name);
+
+    try {
+      await convertImage(file);
+    } catch (err) {
+      showError('Conversion failed: ' + err.message);
     }
-    await convertAndViewImage(file);
+
     e.target.value = '';
   });
 }
 
-function isImageFile(file) {
-  const name = file.name.toLowerCase();
-  return name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.vr.jpg') || name.endsWith('.vr.jpeg');
+function isVrFile(name) {
+  return name.toLowerCase().includes('.vr.');
 }
 
-// === VR SESSION ===
-function setupEnterVrButton() {
-  enterVrButton.addEventListener('click', async () => {
-    if (!immersiveVrSupported) return;
-    try {
-      const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
-      renderer.xr.setSession(session);
-      uiCard.classList.add('hidden');
-    } catch (e) {
-      console.error('Failed to start VR:', e);
-    }
-  });
+// === CONVERSION ===
+async function convertImage(file) {
+  updateLog('Loading image...');
+  updateProgress(15);
 
-  renderer.xr.addEventListener('sessionstart', () => {
-    uiCard.classList.add('hidden');
-    showBrowseButton();
-  });
+  // Load image
+  const img = await loadImageAsync(file);
+  updateLog('Image loaded (' + img.width + 'x' + img.height + ')');
+  updateProgress(35);
 
-  renderer.xr.addEventListener('sessionend', () => {
-    uiCard.classList.remove('hidden');
-    hideVrUi();
-  });
-}
-
-async function detectVrSupport() {
-  if (!navigator.xr) {
-    immersiveVrSupported = false;
-    enterVrButton.disabled = true;
-    enterVrButton.textContent = 'WebXR Not Available';
-    return false;
-  }
+  // Try to extract 3D right eye
+  updateLog('Looking for 3D data...');
+  let rightEye = null;
   try {
-    immersiveVrSupported = await navigator.xr.isSessionSupported('immersive-vr');
-  } catch {
-    immersiveVrSupported = false;
-  }
-  if (!immersiveVrSupported) {
-    enterVrButton.disabled = true;
-    enterVrButton.textContent = 'VR Not Supported';
-  }
-  return immersiveVrSupported;
-}
-
-// === CONVERSION PIPELINE ===
-async function convertAndViewImage(file) {
-  showConversionUI();
-  addLog('Loading image...');
-  updateProgress(10);
-
-  try {
-    const { image, source, shouldRevoke } = await loadImageElement(file);
-    addLog('Image loaded');
-    updateProgress(25);
-
-    // Extract right eye
-    addLog('Extracting 3D stereo data...');
-    const rightEye = await extractCardboardRightEye(file);
-    const hasStereo = !!rightEye;
-    updateProgress(50);
-
-    if (hasStereo) addLog('3D data found ✓');
-    else addLog('No embedded 3D data');
-
-    // Extract audio
-    addLog('Looking for spatial audio...');
-    const audioUrl = await extractCardboardAudio(file);
-    updateProgress(70);
-
-    if (audioUrl) {
-      addLog('Spatial audio found ✓');
-      currentAudio = new Audio(audioUrl);
-      currentAudio.loop = true;
-      currentAudio.volume = 0.9;
-    } else {
-      addLog('No audio in this photo');
-    }
-
-    // Prepare rendering
-    const texture = new THREE.Texture(image);
-    texture.needsUpdate = true;
-    texture.colorSpace = THREE.SRGBColorSpace;
-
-    const ratio = image.width / image.height;
-    const isEquirect = ratio > 1.85 && ratio < 2.15;
-
-    if (hasStereo) {
-      addLog('Creating top/bottom 3D view...');
-      const stereoCanvas = stackStereoTopBottom(image, rightEye);
-      const stereoTex = new THREE.Texture(stereoCanvas);
-      stereoTex.needsUpdate = true;
-      stereoTex.colorSpace = THREE.SRGBColorSpace;
-
-      panoMesh.visible = true;
-      sphereMesh.visible = false;
-      panoMaterial.uniforms.map.value = stereoTex;
-      panoMaterial.uniforms.stereoMode.value = -1; // Top/Bottom
-      panoMesh.scale.y = 1;
-
-    } else if (isEquirect) {
-      addLog('Viewing as 360 photosphere');
-      sphereMesh.visible = true;
-      panoMesh.visible = false;
-      stereoSphereMaterial.uniforms.map.value = texture;
-      stereoSphereMaterial.uniforms.stereoMode.value = 0;
-
-    } else {
-      addLog('Viewing as panorama');
-      panoMesh.visible = true;
-      sphereMesh.visible = false;
-      panoMaterial.uniforms.map.value = texture;
-      panoMaterial.uniforms.stereoMode.value = 0;
-      panoMesh.scale.y = 1;
-    }
-
-    updateProgress(100);
-    addLog('Conversion complete!');
-
-    currentImageFile = file;
-
-    setTimeout(() => {
-      hideConversionUI();
-      showViewButton();
-    }, 600);
-
-    if (currentAudio) {
-      try { await currentAudio.play(); } catch {}
-    }
-
+    rightEye = await extractRightEye(file);
   } catch (e) {
-    addLog('ERROR: ' + e.message);
-    console.error(e);
+    updateLog('3D extraction error (continuing as 2D)');
+  }
+
+  const has3D = !!rightEye;
+  if (has3D) {
+    updateLog('3D data found ✓');
+  } else {
+    updateLog('No 3D data - viewing as 360');
+  }
+  updateProgress(55);
+
+  // Try to extract audio
+  updateLog('Checking for audio...');
+  let audioUrl = null;
+  try {
+    audioUrl = await extractAudio(file);
+  } catch (e) {
+    updateLog('No audio found');
+  }
+
+  if (audioUrl) {
+    updateLog('Audio found ✓');
+    currentAudio = new Audio(audioUrl);
+    currentAudio.loop = true;
+    currentAudio.volume = 0.85;
+  }
+  updateProgress(75);
+
+  // Prepare texture
+  const tex = new THREE.Texture(img);
+  tex.needsUpdate = true;
+  tex.colorSpace = THREE.SRGBColorSpace;
+
+  const ratio = img.width / img.height;
+  const isEquirect = ratio > 1.85 && ratio < 2.15;
+
+  // Render mode
+  if (has3D) {
+    updateLog('Creating top/bottom 3D view...');
+    const stereoCanvas = createTopBottomStereo(img, rightEye);
+    const stereoTex = new THREE.Texture(stereoCanvas);
+    stereoTex.needsUpdate = true;
+    stereoTex.colorSpace = THREE.SRGBColorSpace;
+
+    panoMesh.visible = true;
+    sphereMesh.visible = false;
+    panoMaterial.uniforms.map.value = stereoTex;
+    panoMaterial.uniforms.stereoMode.value = -1; // Top/Bottom
+    panoMesh.scale.y = 1;
+
+  } else if (isEquirect) {
+    updateLog('Viewing as 360 sphere');
+    sphereMesh.visible = true;
+    panoMesh.visible = false;
+    stereoSphereMaterial.uniforms.map.value = tex;
+    stereoSphereMaterial.uniforms.stereoMode.value = 0;
+
+  } else {
+    updateLog('Viewing as panorama');
+    panoMesh.visible = true;
+    sphereMesh.visible = false;
+    panoMaterial.uniforms.map.value = tex;
+    panoMaterial.uniforms.stereoMode.value = 0;
+    panoMesh.scale.y = 1;
+  }
+
+  updateProgress(100);
+  updateLog('Ready!');
+
+  currentImageFile = file;
+
+  // Wait a moment then show view button
+  setTimeout(() => {
+    hideConversionScreen();
+    showViewButton();
+  }, 700);
+
+  // Auto-play audio if present
+  if (currentAudio) {
+    currentAudio.play().catch(() => {
+      updateLog('Tap screen to play audio');
+    });
   }
 }
 
-function stackStereoTopBottom(topImg, bottomImg) {
+function loadImageAsync(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+async function extractRightEye(file) {
+  const buf = await file.arrayBuffer();
+  const txt = new TextDecoder('latin1').decode(buf);
+
+  const patterns = [
+    /GImage:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/,
+    /<GImage:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/GImage:Data>/,
+    /xmpGImg:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/,
+    /<xmpGImg:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/xmpGImg:Data>/
+  ];
+
+  let match = null;
+  for (const p of patterns) {
+    match = txt.match(p);
+    if (match) break;
+  }
+  if (!match) return null;
+
+  let b64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
+  b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+  b64 = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
+
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: 'image/jpeg' });
+  const url = URL.createObjectURL(blob);
+
+  const img = new Image();
+  await new Promise((res, rej) => {
+    img.onload = res;
+    img.onerror = rej;
+    img.src = url;
+  });
+  URL.revokeObjectURL(url);
+  return img;
+}
+
+async function extractAudio(file) {
+  const buf = await file.arrayBuffer();
+  const txt = new TextDecoder('latin1').decode(buf);
+
+  const match = txt.match(/GAudio:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/) ||
+                txt.match(/<GAudio:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/GAudio:Data>/);
+  if (!match) return null;
+
+  let b64 = match[1].replace(/&#10;/g, '').replace(/\s/g, '');
+  b64 = b64.replace(/-/g, '+').replace(/_/g, '/');
+  b64 = b64.padEnd(Math.ceil(b64.length / 4) * 4, '=');
+
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const blob = new Blob([bytes], { type: 'audio/mp4' });
+  return URL.createObjectURL(blob);
+}
+
+function createTopBottomStereo(topImg, bottomImg) {
   const c = document.createElement('canvas');
   c.width = topImg.width;
   c.height = topImg.height * 2;
@@ -305,75 +331,74 @@ function stackStereoTopBottom(topImg, bottomImg) {
 }
 
 // === UI SCREENS ===
-function showConversionUI() {
-  hideAllUI();
+let conversionScreen = null;
+let progressBar = null;
+let logBox = null;
 
-  conversionUI = document.createElement('div');
-  conversionUI.style.cssText = 'position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;background:rgba(5,7,15,0.95);color:#fff;font-family:Inter,sans-serif;';
-  conversionUI.innerHTML = `
-    <div style="width:420px;text-align:center;">
-      <h2 style="margin:0 0 20px;font-size:1.4rem;">Converting to 3D...</h2>
+function showConversionScreen(filename) {
+  hideAllScreens();
+
+  conversionScreen = document.createElement('div');
+  conversionScreen.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,7,15,0.98);color:#fff;display:flex;align-items:center;justify-content:center;font-family:Inter,sans-serif;';
+  conversionScreen.innerHTML = `
+    <div style="width:90%;max-width:420px;text-align:center;">
+      <div style="font-size:1.3rem;margin-bottom:24px;">Converting to 3D</div>
+      <div style="color:#9aa4c2;margin-bottom:8px;font-size:0.9rem;">${filename}</div>
       
-      <div style="background:#1a2338;border-radius:9999px;height:8px;margin-bottom:16px;overflow:hidden;">
-        <div id="progress-fill" style="height:100%;width:0%;background:linear-gradient(90deg,#4f8cff,#7ba3ff);transition:width 0.3s ease;"></div>
+      <div style="background:#1a2338;border-radius:9999px;height:10px;margin:20px 0;overflow:hidden;">
+        <div id="prog-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#4f8cff,#7ba3ff);transition:width .25s ease;"></div>
       </div>
       
-      <div id="log-container" style="background:#0f1629;border-radius:12px;padding:14px;font-family:monospace;font-size:12.5px;height:160px;overflow-y:auto;text-align:left;color:#9aa4c2;border:1px solid #334155;"></div>
+      <div id="log-box" style="background:#0f1629;border:1px solid #334155;border-radius:10px;padding:12px;height:150px;overflow-y:auto;font-family:monospace;font-size:12px;text-align:left;color:#9aa4c2;"></div>
     </div>
   `;
-  document.body.appendChild(conversionUI);
+  document.body.appendChild(conversionScreen);
 
-  progressFill = document.getElementById('progress-fill');
-  logContainer = document.getElementById('log-container');
-  conversionLog = [];
+  progressBar = document.getElementById('prog-bar');
+  logBox = document.getElementById('log-box');
 }
 
-function updateProgress(percent) {
-  if (progressFill) progressFill.style.width = percent + '%';
+function updateProgress(pct) {
+  if (progressBar) progressBar.style.width = pct + '%';
 }
 
-function addLog(msg) {
-  if (!logContainer) return;
-  const time = new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+function updateLog(msg) {
+  if (!logBox) return;
   const line = document.createElement('div');
-  line.style.marginBottom = '3px';
-  line.innerHTML = `<span style="color:#64748b;">[${time}]</span> ${msg}`;
-  logContainer.appendChild(line);
-  logContainer.scrollTop = logContainer.scrollHeight;
-  conversionLog.push(msg);
+  line.style.margin = '2px 0';
+  line.textContent = msg;
+  logBox.appendChild(line);
+  logBox.scrollTop = logBox.scrollHeight;
 }
 
-function hideConversionUI() {
-  if (conversionUI) {
-    conversionUI.remove();
-    conversionUI = null;
+function hideConversionScreen() {
+  if (conversionScreen) {
+    conversionScreen.remove();
+    conversionScreen = null;
   }
 }
 
 function showViewButton() {
-  hideAllUI();
+  hideAllScreens();
 
-  const container = document.createElement('div');
-  container.style.cssText = 'position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;';
-  container.innerHTML = `
+  const screen = document.createElement('div');
+  screen.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,7,15,0.95);display:flex;align-items:center;justify-content:center;';
+  screen.innerHTML = `
     <div style="text-align:center;">
-      <div style="margin-bottom:24px;">
-        <div style="font-size:1.1rem;margin-bottom:6px;">Ready to view</div>
-        <div style="color:#9aa4c2;font-size:0.95rem;">${currentImageFile?.name || 'Image'}</div>
+      <div style="margin-bottom:20px;">
+        <div style="font-size:1.2rem;">Ready to View</div>
+        <div style="color:#9aa4c2;margin-top:6px;">${currentImageFile?.name || ''}</div>
       </div>
-      
-      <button id="view-btn" style="background:linear-gradient(135deg,#4f8cff,#3c7cff);color:white;border:none;padding:16px 48px;border-radius:14px;font-size:1.1rem;font-weight:700;cursor:pointer;box-shadow:0 10px 30px rgba(79,140,255,0.4);">
+      <button id="view-btn" style="background:#4f8cff;color:white;border:none;padding:18px 50px;border-radius:14px;font-size:1.15rem;font-weight:700;box-shadow:0 10px 30px rgba(79,140,255,0.4);">
         View 3D Panorama
       </button>
-      
-      <div style="margin-top:16px;color:#64748b;font-size:0.85rem;">Tap to enter immersive view</div>
+      <div style="margin-top:16px;color:#64748b;font-size:0.85rem;">Tap to enter VR view</div>
     </div>
   `;
-  document.body.appendChild(container);
-  viewButton = container;
+  document.body.appendChild(screen);
 
   document.getElementById('view-btn').onclick = () => {
-    container.remove();
+    screen.remove();
     enterViewingMode();
   };
 }
@@ -381,9 +406,8 @@ function showViewButton() {
 function enterViewingMode() {
   isViewingImage = true;
   panoMesh.visible = true;
-  sphereMesh.visible = false; // or true depending on mode
+  sphereMesh.visible = false;
 
-  showVrUi();
   backButton.visible = true;
   menuButton.visible = true;
 
@@ -403,99 +427,48 @@ function returnToUpload() {
   backButton.visible = false;
   menuButton.visible = false;
 
-  // Show upload UI again
   uiCard.classList.remove('hidden');
-  showBrowseButton();
 }
 
-function toggleMenu() {
-  if (!isViewingImage) {
-    // In upload screen
-    const session = renderer.xr.getSession();
-    if (session) session.end();
-    return;
-  }
-
-  // In viewing mode - show menu options
-  const menu = document.createElement('div');
-  menu.style.cssText = 'position:fixed;inset:0;z-index:30;background:rgba(0,0,0,0.7);display:flex;align-items:center;justify-content:center;';
-  menu.innerHTML = `
-    <div style="background:#1a2338;border-radius:18px;padding:24px 32px;text-align:center;border:1px solid #334155;">
-      <div style="margin-bottom:20px;font-size:1.1rem;font-weight:600;">Menu</div>
-      
-      <button id="return-btn" style="display:block;width:100%;margin-bottom:10px;padding:14px;border-radius:10px;border:1px solid #4f8cff;background:transparent;color:#4f8cff;font-weight:600;cursor:pointer;">Return to Upload</button>
-      <button id="exit-btn" style="display:block;width:100%;padding:14px;border-radius:10px;border:1px solid #ff6b6b;background:transparent;color:#ff6b6b;font-weight:600;cursor:pointer;">Exit VR</button>
+function showMenu() {
+  const m = document.createElement('div');
+  m.style.cssText = 'position:fixed;inset:0;z-index:200;background:rgba(0,0,0,0.75);display:flex;align-items:center;justify-content:center;';
+  m.innerHTML = `
+    <div style="background:#1a2338;border-radius:16px;padding:24px 28px;border:1px solid #334155;min-width:260px;text-align:center;">
+      <div style="font-size:1.1rem;margin-bottom:18px;">Menu</div>
+      <button id="m-return" style="display:block;width:100%;margin-bottom:10px;padding:13px;border-radius:10px;border:1px solid #4f8cff;background:transparent;color:#4f8cff;font-weight:600;">Return to Upload</button>
+      <button id="m-exit" style="display:block;width:100%;padding:13px;border-radius:10px;border:1px solid #ff6b6b;background:transparent;color:#ff6b6b;font-weight:600;">Exit VR</button>
     </div>
   `;
-  document.body.appendChild(menu);
+  document.body.appendChild(m);
 
-  document.getElementById('return-btn').onclick = () => {
-    menu.remove();
+  document.getElementById('m-return').onclick = () => {
+    m.remove();
     returnToUpload();
   };
-  document.getElementById('exit-btn').onclick = () => {
-    const session = renderer.xr.getSession();
-    if (session) session.end();
-    menu.remove();
+  document.getElementById('m-exit').onclick = () => {
+    const s = renderer.xr.getSession();
+    if (s) s.end();
+    m.remove();
   };
 }
 
-function showBrowseButton() {
-  const btn = document.createElement('button');
-  btn.style.cssText = 'position:fixed;bottom:60px;left:50%;transform:translateX(-50%);z-index:20;padding:14px 32px;border-radius:9999px;background:#4f8cff;color:white;border:none;font-weight:700;font-size:1rem;box-shadow:0 8px 25px rgba(79,140,255,0.4);';
-  btn.textContent = '📁 Browse Files';
-  btn.onclick = () => fileInput.click();
-  document.body.appendChild(btn);
-  setTimeout(() => btn.remove(), 8000);
+function showError(msg) {
+  hideAllScreens();
+  const e = document.createElement('div');
+  e.style.cssText = 'position:fixed;inset:0;z-index:100;background:rgba(5,7,15,0.98);display:flex;align-items:center;justify-content:center;';
+  e.innerHTML = `
+    <div style="text-align:center;padding:20px;">
+      <div style="color:#ff6b6b;margin-bottom:12px;">Error</div>
+      <div style="color:#fff;margin-bottom:20px;">${msg}</div>
+      <button onclick="location.reload()" style="padding:10px 24px;border-radius:8px;border:1px solid #fff;background:transparent;color:#fff;">Reload</button>
+    </div>
+  `;
+  document.body.appendChild(e);
 }
 
-function hideAllUI() {
+function hideAllScreens() {
   document.querySelectorAll('div[style*="position:fixed"]').forEach(el => el.remove());
-}
-
-// === AUDIO EXTRACTION ===
-async function extractCardboardAudio(file) {
-  try {
-    const buf = typeof file.arrayBuffer === 'function' ? await file.arrayBuffer() : await (await fetch(file.url)).arrayBuffer();
-    const txt = new TextDecoder('latin1').decode(buf);
-    const m = txt.match(/GAudio:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/) || txt.match(/<GAudio:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/GAudio:Data>/);
-    if (!m) return null;
-    let b64 = m[1].replace(/&#10;/g,'').replace(/\s/g,'').replace(/-/g,'+').replace(/_/g,'/');
-    b64 = b64.padEnd(Math.ceil(b64.length/4)*4, '=');
-    const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], {type:'audio/mp4'});
-    return URL.createObjectURL(blob);
-  } catch { return null; }
-}
-
-async function extractCardboardRightEye(file) {
-  try {
-    const buf = typeof file.arrayBuffer === 'function' ? await file.arrayBuffer() : await (await fetch(file.url)).arrayBuffer();
-    const txt = new TextDecoder('latin1').decode(buf);
-    const patterns = [
-      /GImage:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/,
-      /<GImage:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/GImage:Data>/,
-      /xmpGImg:Data\s*=\s*["']([A-Za-z0-9+/=_-\s&#10;]+)["']/,
-      /<xmpGImg:Data>([A-Za-z0-9+/=_-\s&#10;]+)<\/xmpGImg:Data>/
-    ];
-    let m = null;
-    for (const p of patterns) { m = txt.match(p); if (m) break; }
-    if (!m) return null;
-    let b64 = m[1].replace(/&#10;/g,'').replace(/\s/g,'').replace(/-/g,'+').replace(/_/g,'/');
-    b64 = b64.padEnd(Math.ceil(b64.length/4)*4, '=');
-    const blob = new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], {type:'image/jpeg'});
-    const img = new Image();
-    img.src = URL.createObjectURL(blob);
-    await img.decode();
-    return img;
-  } catch { return null; }
-}
-
-async function loadImageElement(file) {
-  const img = new Image();
-  const src = file.url || URL.createObjectURL(file);
-  img.src = src;
-  await img.decode();
-  return { image: img, source: src, shouldRevoke: !file.url };
 }
 
 // === RENDERING ===
@@ -545,7 +518,7 @@ function createSphereMesh() {
   scene.add(sphereMesh);
 }
 
-// === INPUT HANDLING ===
+// === INPUT ===
 function handleXrInput() {
   if (!renderer.xr.isPresenting) return;
   const session = renderer.xr.getSession();
@@ -558,9 +531,7 @@ function handleXrInput() {
     if (panoMesh.visible) panoMesh.rotation.y += d;
     if (sphereMesh.visible) sphereMesh.rotation.y += d;
     snapTurnLatch = true;
-  } else if (snapTurnLatch && Math.abs(x) < 0.25) {
-    snapTurnLatch = false;
-  }
+  } else if (snapTurnLatch && Math.abs(x) < 0.25) snapTurnLatch = false;
 }
 
 function handleController(controller) {
@@ -582,13 +553,44 @@ function handleController(controller) {
 function animate() {
   renderer.setAnimationLoop(() => {
     handleXrInput();
-    controllerPointers.forEach(c => c.visible = vrUiVisible);
+    controllerPointers.forEach(c => c.visible = isViewingImage);
     renderer.render(scene, camera);
   });
 }
 
-function showVrUi() { vrUiVisible = true; }
-function hideVrUi() { vrUiVisible = false; }
+function setupEnterVrButton() {
+  enterVrButton.addEventListener('click', async () => {
+    if (!immersiveVrSupported) return;
+    try {
+      const session = await navigator.xr.requestSession('immersive-vr', { optionalFeatures: ['hand-tracking'] });
+      renderer.xr.setSession(session);
+      uiCard.classList.add('hidden');
+    } catch (e) {
+      alert('Could not enter VR: ' + e.message);
+    }
+  });
+
+  renderer.xr.addEventListener('sessionstart', () => uiCard.classList.add('hidden'));
+  renderer.xr.addEventListener('sessionend', () => uiCard.classList.remove('hidden'));
+}
+
+async function detectVrSupport() {
+  if (!navigator.xr) {
+    immersiveVrSupported = false;
+    enterVrButton.disabled = true;
+    enterVrButton.textContent = 'WebXR Not Available';
+    return;
+  }
+  try {
+    immersiveVrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+  } catch {
+    immersiveVrSupported = false;
+  }
+  if (!immersiveVrSupported) {
+    enterVrButton.disabled = true;
+    enterVrButton.textContent = 'VR Not Supported Here';
+  }
+}
 
 function onWindowResize() {
   camera.aspect = window.innerWidth / window.innerHeight;

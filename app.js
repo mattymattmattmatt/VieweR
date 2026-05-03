@@ -20,7 +20,7 @@ const fileInput = document.getElementById('fileInput');
 const uiCard = document.getElementById('ui');
 const enterVrButton = document.getElementById('enterVrButton');
 
-// === UI STATE ===
+// === STATE ===
 let currentPanel = null;
 let interactiveObjects = [];
 
@@ -39,6 +39,7 @@ function init() {
   renderer.xr.enabled = true;
 
   createPanoMesh();
+  createEnvironment();
 
   setupControllers();
   setupHands();
@@ -49,10 +50,32 @@ function init() {
   window.addEventListener('resize', onWindowResize);
 }
 
+// === ENVIRONMENT (Premium Dark VR Space) ===
+function createEnvironment() {
+  const starsGeometry = new THREE.BufferGeometry();
+  const starCount = 800;
+  const positions = new Float32Array(starCount * 3);
+  for (let i = 0; i < starCount * 3; i += 3) {
+    positions[i] = (Math.random() - 0.5) * 200;
+    positions[i + 1] = (Math.random() - 0.5) * 200 + 1.6;
+    positions[i + 2] = (Math.random() - 0.5) * 200;
+  }
+  starsGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const starsMaterial = new THREE.PointsMaterial({ color: 0x88aaff, size: 0.15, transparent: true, opacity: 0.6 });
+  const stars = new THREE.Points(starsGeometry, starsMaterial);
+  scene.add(stars);
+
+  const ambient = new THREE.AmbientLight(0x112244, 0.6);
+  scene.add(ambient);
+
+  const pointLight = new THREE.PointLight(0x00f0ff, 0.8, 50);
+  pointLight.position.set(0, 4, -8);
+  scene.add(pointLight);
+}
+
 // === PANORAMA CYLINDER (Full 360° Immersion) ===
 function createPanoMesh() {
-  // Tall + wide cylinder so user feels INSIDE it
-  const geo = new THREE.CylinderGeometry(9, 9, 9, 128, 64, true, -Math.PI/2, Math.PI*2);
+  const geo = new THREE.CylinderGeometry(8, 8, 8, 128, 64, true, -Math.PI/2, Math.PI*2);
   panoMaterial = new THREE.ShaderMaterial({
     side: THREE.DoubleSide,
     uniforms: { map: { value: null }, eyeIndex: { value: 0 }, stereoMode: { value: -1 } },
@@ -75,13 +98,15 @@ function createPanoMesh() {
 }
 
 // === CONTROLLERS ===
+let controllerPointers = [];
+
 function setupControllers() {
   for (let i = 0; i < 2; i++) {
     const controller = renderer.xr.getController(i);
     controller.addEventListener('connected', e => controller.userData.handedness = e.data?.handedness);
     controller.addEventListener('selectstart', () => controller.userData.selectPressed = true);
     controller.addEventListener('selectend', () => controller.userData.selectPressed = false);
-    const pointer = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-3)]), new THREE.LineBasicMaterial({ color: 0x8fb0ff }));
+    const pointer = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0,0,0), new THREE.Vector3(0,0,-3)]), new THREE.LineBasicMaterial({ color: 0x00f0ff }));
     controller.add(pointer);
     controllerPointers.push(pointer);
     scene.add(controller);
@@ -118,27 +143,22 @@ async function convertImage(file) {
   updateProgress(15);
 
   const img = await loadImageAsync(file);
-  updateLog('Image loaded (' + img.width + 'x' + img.height + ')');
+  updateLog('Image loaded');
   updateProgress(35);
 
-  updateLog('Extracting 3D data...');
+  updateLog('Extracting 3D...');
   let rightEye = null;
   try { rightEye = await extractRightEye(file); } catch {}
   const has3D = !!rightEye;
-  if (has3D) updateLog('3D data found ✓');
-  else updateLog('No 3D data - viewing as 360');
   updateProgress(55);
 
-  updateLog('Checking for audio...');
+  updateLog('Checking audio...');
   let audioUrl = null;
   try { audioUrl = await extractAudio(file); } catch {}
   if (audioUrl) {
-    updateLog('Audio found ✓');
     currentAudio = new Audio(audioUrl);
     currentAudio.loop = true;
     currentAudio.volume = 0.85;
-  } else {
-    updateLog('No audio found');
   }
   updateProgress(75);
 
@@ -147,7 +167,7 @@ async function convertImage(file) {
   tex.colorSpace = THREE.SRGBColorSpace;
 
   if (has3D) {
-    updateLog('Creating top/bottom 3D view...');
+    updateLog('Creating 3D view...');
     const stereoCanvas = createTopBottomStereo(img, rightEye);
     const stereoTex = new THREE.Texture(stereoCanvas);
     stereoTex.needsUpdate = true;
@@ -155,7 +175,7 @@ async function convertImage(file) {
     panoMaterial.uniforms.map.value = stereoTex;
     panoMaterial.uniforms.stereoMode.value = -1;
   } else {
-    updateLog('Viewing as 360 panorama');
+    updateLog('360 panorama');
     panoMaterial.uniforms.map.value = tex;
     panoMaterial.uniforms.stereoMode.value = 0;
   }
@@ -170,7 +190,7 @@ async function convertImage(file) {
     showReadyPanel();
     enterVrButton.disabled = false;
     enterVrButton.textContent = 'Enter VR';
-  }, 600);
+  }, 500);
 
   if (currentAudio) currentAudio.play().catch(() => {});
 }
@@ -233,43 +253,45 @@ function createTopBottomStereo(topImg, bottomImg) {
   return c;
 }
 
-// === UI PANELS (Premium Oculus-style) ===
-function createGlassPanel(width, height, title, contentHTML) {
+// === PREMIUM UI (Creative Oculus-style) ===
+function createPremiumPanel(title, subtitle) {
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 768;
+  canvas.width = 1200;
+  canvas.height = 800;
   const ctx = canvas.getContext('2d');
 
-  // Background
-  ctx.fillStyle = 'rgba(10, 12, 24, 0.92)';
-  roundRect(ctx, 0, 0, 1024, 768, 40);
+  const grad = ctx.createLinearGradient(0, 0, 0, 800);
+  grad.addColorStop(0, 'rgba(8, 10, 20, 0.95)');
+  grad.addColorStop(1, 'rgba(4, 6, 14, 0.98)');
+  ctx.fillStyle = grad;
+  roundRect(ctx, 0, 0, 1200, 800, 50);
   ctx.fill();
 
-  // Border glow
-  ctx.strokeStyle = 'rgba(79, 140, 255, 0.3)';
-  ctx.lineWidth = 4;
-  roundRect(ctx, 8, 8, 1008, 752, 36);
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.5)';
+  ctx.lineWidth = 6;
+  roundRect(ctx, 12, 12, 1176, 776, 44);
   ctx.stroke();
 
-  // Title
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 48px Inter, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(title, 512, 80);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+  ctx.lineWidth = 2;
+  roundRect(ctx, 24, 24, 1152, 752, 38);
+  ctx.stroke();
 
-  // Content
-  ctx.fillStyle = '#9aa4c2';
-  ctx.font = '28px Inter, sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 56px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
-  const lines = contentHTML.split('\n');
-  lines.forEach((line, i) => {
-    ctx.fillText(line, 512, 160 + i * 42);
-  });
+  ctx.fillText(title, 600, 100);
+
+  if (subtitle) {
+    ctx.fillStyle = '#00f0ff';
+    ctx.font = '400 28px Inter, system-ui, sans-serif';
+    ctx.fillText(subtitle, 600, 150);
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
   const mesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(width, height),
-    new THREE.MeshBasicMaterial({ map: texture, transparent: true })
+    new THREE.PlaneGeometry(3.8, 2.5),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true, side: THREE.DoubleSide })
   );
   mesh.userData.canvas = canvas;
   mesh.userData.ctx = ctx;
@@ -288,29 +310,65 @@ function roundRect(ctx, x, y, w, h, r) {
 
 function showMainMenu() {
   hideCurrentPanel();
-  const panel = createGlassPanel(3.2, 2.4, '3D Panorama', 
-    'Cardboard Camera + 360 Photos\n\n' +
-    'Browse Files\n\n' +
-    'Exit VR');
-  panel.position.set(0, 1.6, -2.5);
+  const panel = createPremiumPanel('3D PANORAMA', 'Cardboard Camera • 360 Photos');
+  panel.position.set(0, 1.8, -3.2);
   scene.add(panel);
   currentPanel = panel;
 
-  // Add interactive buttons
-  addButton(panel, 0, -0.3, 'Browse Files', () => fileInput.click());
-  addButton(panel, 0, -1.0, 'Exit VR', () => {
-    const session = renderer.xr.getSession();
-    if (session) session.end();
-  });
+  const browseBtn = createNeonButton('BROWSE FILES', 0, -0.2, () => fileInput.click());
+  panel.add(browseBtn);
+  interactiveObjects.push(browseBtn);
+
+  const exitBtn = createNeonButton('EXIT VR', 0, -1.1, () => {
+    const s = renderer.xr.getSession();
+    if (s) s.end();
+  }, true);
+  panel.add(exitBtn);
+  interactiveObjects.push(exitBtn);
+}
+
+function createNeonButton(text, x, y, onClick, secondary = false) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 600;
+  canvas.height = 90;
+  const ctx = canvas.getContext('2d');
+
+  if (secondary) {
+    ctx.strokeStyle = 'rgba(255, 100, 100, 0.6)';
+    ctx.lineWidth = 3;
+    roundRect(ctx, 4, 4, 592, 82, 18);
+    ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 80, 80, 0.15)';
+    roundRect(ctx, 4, 4, 592, 82, 18);
+    ctx.fill();
+  } else {
+    ctx.fillStyle = '#00f0ff';
+    roundRect(ctx, 0, 0, 600, 90, 20);
+    ctx.fill();
+    ctx.shadowColor = '#00f0ff';
+    ctx.shadowBlur = 20;
+  }
+
+  ctx.fillStyle = secondary ? '#ff6666' : '#000000';
+  ctx.font = '700 32px Inter, system-ui, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 300, 45);
+
+  const texture = new THREE.CanvasTexture(canvas);
+  const mesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(2.2, 0.33),
+    new THREE.MeshBasicMaterial({ map: texture, transparent: true })
+  );
+  mesh.position.set(x, y, -0.1);
+  mesh.userData.onClick = onClick;
+  return mesh;
 }
 
 function showConversionPanel(filename) {
   hideCurrentPanel();
-  const panel = createGlassPanel(3.2, 2.4, 'Converting to 3D', 
-    filename + '\n\n' +
-    '████████████████████  0%\n\n' +
-    'Loading image...');
-  panel.position.set(0, 1.6, -2.5);
+  const panel = createPremiumPanel('CONVERTING', filename);
+  panel.position.set(0, 1.8, -3.2);
   scene.add(panel);
   currentPanel = panel;
 }
@@ -318,86 +376,97 @@ function showConversionPanel(filename) {
 function updateProgress(pct) {
   if (!currentPanel || !currentPanel.userData.ctx) return;
   const ctx = currentPanel.userData.ctx;
-  ctx.fillStyle = 'rgba(10, 12, 24, 0.92)';
-  roundRect(ctx, 0, 0, 1024, 768, 40);
+  ctx.fillStyle = 'rgba(8, 10, 20, 0.95)';
+  roundRect(ctx, 0, 0, 1200, 800, 50);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(79, 140, 255, 0.3)';
-  ctx.lineWidth = 4;
-  roundRect(ctx, 8, 8, 1008, 752, 36);
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.5)';
+  ctx.lineWidth = 6;
+  roundRect(ctx, 12, 12, 1176, 776, 44);
   ctx.stroke();
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 48px Inter, sans-serif';
+  ctx.font = '700 56px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Converting to 3D', 512, 80);
-  ctx.fillStyle = '#9aa4c2';
-  ctx.font = '28px Inter, sans-serif';
-  ctx.fillText(currentImageFile?.name || '', 512, 140);
-  const barWidth = Math.floor(pct / 100 * 600);
-  ctx.fillStyle = '#4f8cff';
-  ctx.fillRect(212, 200, barWidth, 20);
+  ctx.fillText('CONVERTING', 600, 100);
+  ctx.fillStyle = '#00f0ff';
+  ctx.font = '400 28px Inter, system-ui, sans-serif';
+  ctx.fillText(currentImageFile?.name || '', 600, 150);
+  const barWidth = Math.floor(pct / 100 * 700);
+  ctx.fillStyle = '#00f0ff';
+  ctx.fillRect(250, 280, barWidth, 18);
   ctx.strokeStyle = '#ffffff';
-  ctx.strokeRect(212, 200, 600, 20);
-  ctx.fillStyle = '#9aa4c2';
-  ctx.fillText(pct + '%', 512, 260);
+  ctx.lineWidth = 2;
+  roundRect(ctx, 250, 280, 700, 18, 4);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 36px Inter, system-ui, sans-serif';
+  ctx.fillText(pct + '%', 600, 340);
   currentPanel.material.map.needsUpdate = true;
 }
 
 function updateLog(msg) {
   if (!currentPanel || !currentPanel.userData.ctx) return;
   const ctx = currentPanel.userData.ctx;
-  ctx.fillStyle = 'rgba(10, 12, 24, 0.92)';
-  roundRect(ctx, 0, 0, 1024, 768, 40);
+  ctx.fillStyle = 'rgba(8, 10, 20, 0.95)';
+  roundRect(ctx, 0, 0, 1200, 800, 50);
   ctx.fill();
-  ctx.strokeStyle = 'rgba(79, 140, 255, 0.3)';
-  ctx.lineWidth = 4;
-  roundRect(ctx, 8, 8, 1008, 752, 36);
+  ctx.strokeStyle = 'rgba(0, 240, 255, 0.5)';
+  ctx.lineWidth = 6;
+  roundRect(ctx, 12, 12, 1176, 776, 44);
   ctx.stroke();
   ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 48px Inter, sans-serif';
+  ctx.font = '700 56px Inter, system-ui, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillText('Converting to 3D', 512, 80);
-  ctx.fillStyle = '#9aa4c2';
-  ctx.font = '28px Inter, sans-serif';
-  ctx.fillText(currentImageFile?.name || '', 512, 140);
-  const barWidth = Math.floor(75 / 100 * 600);
-  ctx.fillStyle = '#4f8cff';
-  ctx.fillRect(212, 200, barWidth, 20);
+  ctx.fillText('CONVERTING', 600, 100);
+  ctx.fillStyle = '#00f0ff';
+  ctx.font = '400 28px Inter, system-ui, sans-serif';
+  ctx.fillText(currentImageFile?.name || '', 600, 150);
+  const barWidth = Math.floor(75 / 100 * 700);
+  ctx.fillStyle = '#00f0ff';
+  ctx.fillRect(250, 280, barWidth, 18);
   ctx.strokeStyle = '#ffffff';
-  ctx.strokeRect(212, 200, 600, 20);
-  ctx.fillStyle = '#9aa4c2';
-  ctx.fillText('75%', 512, 260);
-  ctx.fillText(msg, 512, 340);
+  ctx.lineWidth = 2;
+  roundRect(ctx, 250, 280, 700, 18, 4);
+  ctx.stroke();
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '700 36px Inter, system-ui, sans-serif';
+  ctx.fillText('75%', 600, 340);
+  ctx.fillStyle = '#88aaff';
+  ctx.font = '400 24px monospace';
+  ctx.fillText(msg, 600, 420);
   currentPanel.material.map.needsUpdate = true;
 }
 
 function showReadyPanel() {
   hideCurrentPanel();
-  const panel = createGlassPanel(3.2, 2.4, 'Ready to View', 
-    currentImageFile?.name + '\n\n' +
-    '✓ 3D Stereo    ✓ Audio\n\n' +
-    'View in VR\n\n' +
-    'Convert Another');
-  panel.position.set(0, 1.6, -2.5);
+  const panel = createPremiumPanel('READY', currentImageFile?.name);
+  panel.position.set(0, 1.8, -3.2);
   scene.add(panel);
   currentPanel = panel;
 
-  addButton(panel, 0, -0.4, 'View in VR', () => {
+  const viewBtn = createNeonButton('ENTER PANORAMA', 0, -0.3, () => {
     hideCurrentPanel();
     enterViewingMode();
   });
-  addButton(panel, 0, -1.1, 'Convert Another', () => {
+  panel.add(viewBtn);
+  interactiveObjects.push(viewBtn);
+
+  const againBtn = createNeonButton('CONVERT ANOTHER', 0, -1.2, () => {
     hideCurrentPanel();
     showMainMenu();
-  });
+  }, true);
+  panel.add(againBtn);
+  interactiveObjects.push(againBtn);
 }
 
 function showErrorPanel(msg) {
   hideCurrentPanel();
-  const panel = createGlassPanel(3.2, 2.4, 'Error', msg + '\n\nReload');
-  panel.position.set(0, 1.6, -2.5);
+  const panel = createPremiumPanel('ERROR', msg);
+  panel.position.set(0, 1.8, -3.2);
   scene.add(panel);
   currentPanel = panel;
-  addButton(panel, 0, -0.8, 'Reload', () => location.reload());
+  const reloadBtn = createNeonButton('RELOAD', 0, -0.8, () => location.reload());
+  panel.add(reloadBtn);
+  interactiveObjects.push(reloadBtn);
 }
 
 function hideCurrentPanel() {
@@ -408,32 +477,7 @@ function hideCurrentPanel() {
   interactiveObjects = [];
 }
 
-function addButton(panel, x, y, label, onClick) {
-  const btn = createTextButton(label, x, y, -0.1);
-  btn.userData.onClick = onClick;
-  panel.add(btn);
-  interactiveObjects.push(btn);
-}
-
-function createTextButton(label, x, y, z) {
-  const canvas = document.createElement('canvas');
-  canvas.width = 512; canvas.height = 96;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#4f8cff';
-  roundRect(ctx, 0, 0, 512, 96, 20);
-  ctx.fill();
-  ctx.fillStyle = '#ffffff';
-  ctx.font = 'bold 36px Inter, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(label, 256, 48);
-  const texture = new THREE.CanvasTexture(canvas);
-  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.34), new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
-  mesh.position.set(x, y, z);
-  return mesh;
-}
-
-// === VIEWING MODE ===
+// === VIEWING ===
 function enterViewingMode() {
   isViewing = true;
   panoMesh.visible = true;
@@ -463,15 +507,13 @@ function handleXrInput() {
     snapTurnLatch = false;
   }
 
-  // Menu button (left controller button 4 or 5)
   const left = sources.find(s => s.handedness === 'left');
   const menuPressed = left?.gamepad?.buttons?.[4]?.pressed || left?.gamepad?.buttons?.[5]?.pressed;
   if (menuPressed && !menuButtonLatch) {
-    if (isViewing) {
-      returnToMenu();
-    } else {
-      const session = renderer.xr.getSession();
-      if (session) session.end();
+    if (isViewing) returnToMenu();
+    else {
+      const s = renderer.xr.getSession();
+      if (s) s.end();
     }
   }
   menuButtonLatch = menuPressed;
@@ -488,7 +530,7 @@ function handleController(controller) {
   interactiveObjects.forEach(o => o.scale.set(1, 1, 1));
   if (!hits.length) return;
   const sel = hits[0].object;
-  sel.scale.set(1.08, 1.08, 1.08);
+  sel.scale.set(1.1, 1.1, 1.1);
   if (controller.userData.selectPressed) {
     controller.userData.selectPressed = false;
     sel.userData.onClick?.();
@@ -506,9 +548,7 @@ function animate() {
 
 // === VR SESSION ===
 function setupEnterVrButton() {
-  enterVrButton.addEventListener('click', () => {
-    startVrSession();
-  });
+  enterVrButton.addEventListener('click', () => startVrSession());
 
   renderer.xr.addEventListener('sessionstart', () => {
     uiCard.style.display = 'none';
@@ -533,29 +573,19 @@ async function detectVrSupport() {
   }
   try {
     immersiveVrSupported = await navigator.xr.isSessionSupported('immersive-vr');
-  } catch {
-    immersiveVrSupported = false;
-  }
-  if (!immersiveVrSupported) {
-    enterVrButton.disabled = true;
-    enterVrButton.textContent = 'VR Not Supported Here';
-  } else {
-    enterVrButton.disabled = false;
-  }
+  } catch { immersiveVrSupported = false; }
+  enterVrButton.disabled = !immersiveVrSupported;
+  if (!immersiveVrSupported) enterVrButton.textContent = 'VR Not Supported Here';
   return immersiveVrSupported;
 }
 
 async function startVrSession() {
-  if (!navigator.xr) {
-    alert('WebXR not available');
-    return;
-  }
+  if (!navigator.xr) return;
   try {
     const session = await navigator.xr.requestSession('immersive-vr');
     renderer.xr.setSession(session);
-  } catch (error) {
-    console.error('Failed to start VR:', error);
-    alert('Could not enter VR: ' + (error?.message || 'unknown'));
+  } catch (e) {
+    alert('Could not enter VR: ' + (e?.message || 'unknown'));
   }
 }
 

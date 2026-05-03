@@ -80,13 +80,21 @@ function setupEnterVrButton() {
 
   renderer.xr.addEventListener('sessionstart', () => {
     uiCard.style.display = 'none';
+    vrUiVisible = true;
+    galleryVisible = true;
+    menuButtonLatch = false;
+    snapTurnLatch = false;
+
+    if (loadedFiles.length) {
+      createGallery(loadedFiles);
+      showVrUi();
+    }
   });
 
   renderer.xr.addEventListener('sessionend', () => {
     uiCard.style.display = 'flex';
     backButton.visible = false;
     menuButton.visible = false;
-    isViewingImage = false;
   });
 }
 

@@ -18,16 +18,11 @@
 <body>
   <div id="ui">
     <h1>VR Depth Viewer</h1>
-    <p class="subtitle">On Quest, choose image files and include Cardboard Camera .vr.jpg photos, then launch WebXR.</p>
-    <label class="picker-title" for="fileInput">Choose Image Files</label>
-    <input class="picker-input" type="file" id="fileInput" accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.vr.jpg" multiple />
-    <div class="button-row">
-      <button id="demoPicturesButton" type="button">Demo Pictures</button>
-      <button id="clearFilesButton" type="button">Clear Files</button>
-    </div>
-    <div id="loading">Loading files...</div>
-    <div id="fileCount">0 image files loaded</div>
-    <button id="enterVrButton" type="button" disabled>Enter VR Gallery</button>
+    <p class="subtitle">Quest 3 • Cardboard Camera 3D + 360 Photos • Enter VR → Browse → Convert → View</p>
+    <label class="picker-title" for="fileInput">Choose .vr.jpg or 360 Photo</label>
+    <input class="picker-input" type="file" id="fileInput" accept=".jpg,.jpeg,.vr.jpg,.vr.jpeg" />
+    <div style="margin-top:8px;color:#64748b;font-size:0.82rem;">Single image mode • Auto-converts Cardboard Camera photos</div>
+    <button id="enterVrButton" type="button" disabled style="margin-top:16px;">Enter VR</button>
   </div>
 
   <canvas id="xr-canvas"></canvas>

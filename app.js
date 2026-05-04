@@ -47,6 +47,8 @@ const demoPicturesButton = document.getElementById('demoPicturesButton');
 const clearFilesButton = document.getElementById('clearFilesButton');
 const uiCard = document.getElementById('ui');
 
+uiCard.classList.add('pre-vr');
+
 init();
 animate();
 
@@ -78,13 +80,15 @@ function init() {
 
 function setupEnterVrButton() {
   enterVrButton.addEventListener('click', () => {
-    if (!loadedFiles.length) return;
-    createGallery(loadedFiles);
+    if (!renderer.xr.isPresenting && loadedFiles.length) {
+      createGallery(loadedFiles);
+    }
     startVrSession();
   });
 
   renderer.xr.addEventListener('sessionstart', () => {
-    uiCard.classList.add('hidden');
+    uiCard.classList.remove('pre-vr');
+    enterVrButton.classList.add('hidden');
     vrUiVisible = false;
     hideVrUi();
     showGallery();
@@ -92,7 +96,8 @@ function setupEnterVrButton() {
   });
 
   renderer.xr.addEventListener('sessionend', () => {
-    uiCard.classList.remove('hidden');
+    uiCard.classList.add('pre-vr');
+    enterVrButton.classList.remove('hidden');
     hideVrUi();
   });
 
@@ -205,7 +210,7 @@ function setupClearButton() {
 function updateFileCount(isDemo = false) {
   const count = loadedFiles.length;
   fileCount.textContent = `${count} ${isDemo ? 'demo image' : 'image file'}${count === 1 ? '' : 's'} loaded`;
-  enterVrButton.disabled = count === 0 || immersiveVrSupported === false;
+  enterVrButton.disabled = immersiveVrSupported === false;
 }
 
 function isImageFile(file) {

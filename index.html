@@ -18,17 +18,19 @@
 <body>
   <div id="ui">
     <img id="introLogo" src="3D Pano VieweR Logo.png" alt="3D Pano VieweR logo" />
-    <h1>3D Pano VieweR</h1>
-    <p class="subtitle">Load photo spheres or Cardboard Camera top/bottom stereo panoramas, then enter VR.</p>
-    <label class="picker-title" for="fileInput">Choose Image Files</label>
-    <input class="picker-input" type="file" id="fileInput" accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.vr.jpg" multiple />
-    <div class="button-row">
-      <button id="demoPicturesButton" type="button">Demo Pictures</button>
-      <button id="clearFilesButton" type="button">Clear Files</button>
+    <div id="fileBrowserControls">
+      <h1>3D Pano VieweR</h1>
+      <p class="subtitle">Load photo spheres or Cardboard Camera top/bottom stereo panoramas.</p>
+      <label class="picker-title" for="fileInput">Choose Image Files</label>
+      <input class="picker-input" type="file" id="fileInput" accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.vr.jpg" multiple />
+      <div class="button-row">
+        <button id="demoPicturesButton" type="button">Demo Pictures</button>
+        <button id="clearFilesButton" type="button">Clear Files</button>
+      </div>
+      <div id="loading">Loading files...</div>
+      <div id="fileCount">0 image files loaded</div>
     </div>
-    <div id="loading">Loading files...</div>
-    <div id="fileCount">0 image files loaded</div>
-    <button id="enterVrButton" type="button" disabled>Enter VR Gallery</button>
+    <button id="enterVrButton" type="button">Enter VR Gallery</button>
   </div>
 
   <canvas id="xr-canvas"></canvas>

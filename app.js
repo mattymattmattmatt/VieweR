@@ -26,6 +26,8 @@ let immersiveVrSupported = null;
 let menuButtonLatch = false;
 let snapTurnLatch = false;
 let imagePointerVisible = true;
+let vrFrontMenu;
+let vrPreviewPanel;
 const SNAP_TURN_ANGLE = THREE.MathUtils.degToRad(30);
 const SNAP_TURN_THRESHOLD = 0.65;
 
@@ -61,6 +63,7 @@ function init() {
   createPanoMesh();
   createSphereMesh();
   createUiButtonsInVr();
+  createVrFrontUi();
 
   setupControllers();
   setupHands();
@@ -85,6 +88,7 @@ function setupEnterVrButton() {
     vrUiVisible = false;
     hideVrUi();
     showGallery();
+    showVrFrontMenu();
   });
 
   renderer.xr.addEventListener('sessionend', () => {
@@ -98,6 +102,7 @@ async function detectVrSupport() {
   if (!navigator.xr) {
     immersiveVrSupported = false;
     enterVrButton.disabled = true;
+    hideVrFrontMenu();
     enterVrButton.textContent = 'WebXR Not Available';
     fileCount.textContent = 'Open this app in Quest Browser over HTTPS or localhost.';
     return false;
@@ -111,6 +116,7 @@ async function detectVrSupport() {
 
   if (!immersiveVrSupported) {
     enterVrButton.disabled = true;
+    hideVrFrontMenu();
     enterVrButton.textContent = 'VR Not Supported Here';
     fileCount.textContent = 'Immersive VR is unavailable in this browser/context.';
   }
@@ -148,6 +154,10 @@ function setupInputs() {
     mergeFiles(incoming);
 
     updateFileCount();
+    if (renderer.xr.isPresenting) {
+      createGallery(loadedFiles);
+      showVrFrontMenu();
+    }
     loadingText.style.display = 'none';
 
     event.target.value = '';
@@ -173,6 +183,10 @@ function setupDemoPicturesButton() {
   demoPicturesButton.addEventListener('click', () => {
     loadedFiles = [...demoImages];
     updateFileCount(true);
+    if (renderer.xr.isPresenting) {
+      createGallery(loadedFiles);
+      showVrFrontMenu();
+    }
   });
 }
 
@@ -181,8 +195,10 @@ function setupClearButton() {
     loadedFiles = [];
     clearGallery();
     showGallery();
+    showVrFrontMenu();
     fileCount.textContent = '0 image files loaded';
     enterVrButton.disabled = true;
+    hideVrFrontMenu();
   });
 }
 
@@ -336,6 +352,7 @@ function hideVrUi() {
 function showVrUi() {
   [backButton, menuButton].forEach((b) => { b.visible = true; });
   controllerPointers.forEach((pointer) => { pointer.visible = true; });
+  if (renderer.xr.isPresenting) showVrFrontMenu();
 }
 
 function toggleGalleryVisibility() {
@@ -355,6 +372,7 @@ function showGallery() {
   });
   [backButton, menuButton].forEach((b) => { b.visible = false; });
   controllerPointers.forEach((pointer) => { pointer.visible = true; });
+  if (renderer.xr.isPresenting) showVrFrontMenu();
 }
 
 function exitToUploadScreen() {
@@ -398,6 +416,77 @@ function setupHands() {
     scene.add(hand);
     hands.push(hand);
   }
+}
+
+
+function createVrFrontUi() {
+  vrFrontMenu = new THREE.Group();
+  const selectButton = createTextButton('Select Files', 0, 1.55, -1.3);
+  selectButton.scale.set(1.2, 1.2, 1.2);
+  selectButton.userData.onClick = () => fileInput.click();
+  const helper = makeLabelSprite('Choose an image file while in VR\n(360 sphere or top/bottom stereo pano)', 0.9, 0.26);
+  helper.position.set(0, 1.35, -1.3);
+  vrFrontMenu.add(selectButton);
+  vrFrontMenu.add(helper);
+  scene.add(vrFrontMenu);
+  interactiveObjects.push(selectButton);
+
+  vrPreviewPanel = new THREE.Group();
+  vrPreviewPanel.visible = false;
+  scene.add(vrPreviewPanel);
+}
+
+function makeLabelSprite(text, width = 1, height = 0.2) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024; canvas.height = 320;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(15,18,28,0.75)';
+  roundRect(ctx, 10, 10, canvas.width - 20, canvas.height - 20, 28);
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(160,190,255,0.7)';
+  ctx.lineWidth = 6;
+  roundRect(ctx, 10, 10, canvas.width - 20, canvas.height - 20, 28);
+  ctx.stroke();
+  ctx.fillStyle = '#e8efff';
+  ctx.font = '48px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const lines = text.split('\n');
+  lines.forEach((line, i) => ctx.fillText(line, canvas.width / 2, canvas.height / 2 - (lines.length - 1) * 28 + i * 56));
+  const texture = new THREE.CanvasTexture(canvas);
+  return new THREE.Mesh(new THREE.PlaneGeometry(width, height), new THREE.MeshBasicMaterial({ map: texture, transparent: true }));
+}
+
+function showVrFrontMenu() {
+  if (vrFrontMenu) vrFrontMenu.visible = true;
+}
+function hideVrFrontMenu() {
+  if (vrFrontMenu) vrFrontMenu.visible = false;
+  if (vrPreviewPanel) vrPreviewPanel.visible = false;
+}
+
+function updateVrPreview(texture, isStereo, isSphere) {
+  if (!vrPreviewPanel) return;
+  while (vrPreviewPanel.children.length) {
+    const c = vrPreviewPanel.children.pop();
+    c.geometry?.dispose?.();
+    c.material?.map?.dispose?.();
+    c.material?.dispose?.();
+  }
+  const size = isSphere ? [0.5, 0.5] : [0.58, 0.32];
+  const thumb = new THREE.Mesh(new THREE.PlaneGeometry(size[0], size[1]), new THREE.MeshBasicMaterial({ map: texture }));
+  thumb.position.set(-0.35, 1.0, -1.15);
+  vrPreviewPanel.add(thumb);
+  if (isStereo) {
+    const wide = new THREE.Mesh(new THREE.PlaneGeometry(1.15, 0.32), new THREE.MeshBasicMaterial({ map: texture }));
+    wide.position.set(0.35, 1.0, -1.15);
+    vrPreviewPanel.add(wide);
+  } else {
+    const card = makeLabelSprite('Photo Sphere', 0.6, 0.16);
+    card.position.set(0.32, 1.0, -1.15);
+    vrPreviewPanel.add(card);
+  }
+  vrPreviewPanel.visible = true;
 }
 
 function createGallery(files) {
@@ -514,7 +603,10 @@ async function loadImage(file) {
       panoMesh.scale.y = 1;
     }
 
+    updateVrPreview(texture, hasStereoPair || isVrPano, isEquirect && !hasStereoPair);
+
     galleryVisible = false;
+    hideVrFrontMenu();
     imagePointerVisible = false;
     controllerPointers.forEach((pointer) => { pointer.visible = false; });
     interactiveObjects.forEach((obj) => {
@@ -524,6 +616,7 @@ async function loadImage(file) {
     console.error('Failed to load selected image:', error);
     fileCount.textContent = `Failed to open image: ${file?.name || 'unknown file'}`;
     showGallery();
+    showVrFrontMenu();
   } finally {
     if (shouldRevoke && source) URL.revokeObjectURL(source);
   }

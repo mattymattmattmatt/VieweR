@@ -424,12 +424,22 @@ function setupHands() {
 }
 
 
+
+function openFilePickerSafely() {
+  if (renderer.xr.isPresenting) {
+    // Some headset browsers crash when opening the system file picker in-session.
+    fileCount.textContent = 'File browser is unstable in VR on some headsets. Load files before VR, then reopen session.';
+    return;
+  }
+  fileInput.click();
+}
+
 function createVrFrontUi() {
   vrFrontMenu = new THREE.Group();
   const selectButton = createTextButton('Select Files', 0, 1.55, -1.3);
   selectButton.scale.set(1.2, 1.2, 1.2);
-  selectButton.userData.onClick = () => fileInput.click();
-  const helper = makeLabelSprite('Choose an image file while in VR\n(360 sphere or top/bottom stereo pano)', 0.9, 0.26);
+  selectButton.userData.onClick = openFilePickerSafely;
+  const helper = makeLabelSprite('Select files safely from the panel\n(or load first, then enter VR)', 0.9, 0.26);
   helper.position.set(0, 1.35, -1.3);
   vrFrontMenu.add(selectButton);
   vrFrontMenu.add(helper);

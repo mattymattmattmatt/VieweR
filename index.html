@@ -22,7 +22,8 @@
       <h1>3D Pano VieweR</h1>
       <p class="subtitle">Load photo spheres or Cardboard Camera top/bottom stereo panoramas.</p>
       <label class="picker-title" for="fileInput">Choose Image Files</label>
-      <input class="picker-input" type="file" id="fileInput" accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.vr.jpg" multiple />
+      <button id="selectFilesButton" type="button">Select Files</button>
+      <input class="picker-input hidden-file-input" type="file" id="fileInput" accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.vr.jpg" multiple />
       <div class="button-row">
         <button id="demoPicturesButton" type="button">Demo Pictures</button>
         <button id="clearFilesButton" type="button">Clear Files</button>

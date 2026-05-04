@@ -31,3 +31,9 @@ body { margin: 0; background: radial-gradient(circle at top, #16203b 0%, var(--b
   0%, 100% { transform: translateY(0px) scale(1); }
   50% { transform: translateY(-8px) scale(1.015); }
 }
+
+#ui.pre-vr #fileBrowserControls { display: none; }
+#ui.pre-vr { width: min(90vw, 420px); }
+#ui.pre-vr #enterVrButton { width: min(260px, 100%); }
+
+.hidden { display:none !important; }

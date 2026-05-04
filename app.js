@@ -43,11 +43,11 @@ const fileInput = document.getElementById('fileInput');
 const loadingText = document.getElementById('loading');
 const fileCount = document.getElementById('fileCount');
 const enterVrButton = document.getElementById('enterVrButton');
+const selectFilesButton = document.getElementById('selectFilesButton');
 const demoPicturesButton = document.getElementById('demoPicturesButton');
 const clearFilesButton = document.getElementById('clearFilesButton');
 const uiCard = document.getElementById('ui');
 
-uiCard.classList.add('pre-vr');
 
 init();
 animate();
@@ -70,6 +70,7 @@ function init() {
   setupControllers();
   setupHands();
   setupInputs();
+  setupSelectFilesButton();
   setupDemoPicturesButton();
   setupClearButton();
   setupEnterVrButton();
@@ -96,7 +97,6 @@ function setupEnterVrButton() {
   });
 
   renderer.xr.addEventListener('sessionend', () => {
-    uiCard.classList.add('pre-vr');
     enterVrButton.classList.remove('hidden');
     hideVrUi();
   });
@@ -142,6 +142,12 @@ async function startVrSession() {
     console.error('Failed to start VR session:', error);
     fileCount.textContent = `Could not start VR: ${error?.message || 'unknown error'}`;
   }
+}
+
+function setupSelectFilesButton() {
+  selectFilesButton.addEventListener('click', () => {
+    fileInput.click();
+  });
 }
 
 function setupInputs() {

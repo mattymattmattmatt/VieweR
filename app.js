@@ -106,7 +106,6 @@ function setupEnterVrButton() {
 async function detectVrSupport() {
   if (!navigator.xr) {
     immersiveVrSupported = false;
-    enterVrButton.disabled = true;
     hideVrFrontMenu();
     enterVrButton.textContent = 'WebXR Not Available';
     fileCount.textContent = 'Open this app in Quest Browser over HTTPS or localhost.';
@@ -120,7 +119,6 @@ async function detectVrSupport() {
   }
 
   if (!immersiveVrSupported) {
-    enterVrButton.disabled = true;
     hideVrFrontMenu();
     enterVrButton.textContent = 'VR Not Supported Here';
     fileCount.textContent = 'Immersive VR is unavailable in this browser/context.';
@@ -151,6 +149,7 @@ function setupInputs() {
 
     if (!allFiles.length) {
       loadingText.style.display = 'none';
+      if (renderer.xr.isPresenting) showVrFrontMenu();
       return;
     }
 
@@ -202,7 +201,6 @@ function setupClearButton() {
     showGallery();
     showVrFrontMenu();
     fileCount.textContent = '0 image files loaded';
-    enterVrButton.disabled = true;
     hideVrFrontMenu();
   });
 }

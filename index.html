@@ -1,41 +1,164 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>VR Depth Viewer</title>
-  <link rel="icon" href="data:," />
-  <link rel="stylesheet" href="style.css" />
-  <script type="importmap">
-    {
-      "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/"
-      }
-    }
-  </script>
+
+<meta charset="UTF-8" />
+
+<meta
+  name="viewport"
+  content="width=device-width, initial-scale=1.0"
+/>
+
+<title>3D Pano VieweR</title>
+
+<style>
+
+body{
+  margin:0;
+  overflow:hidden;
+  background:black;
+  font-family:sans-serif;
+}
+
+/* UI PANEL */
+
+#ui{
+
+  position:absolute;
+
+  top:50%;
+  left:50%;
+
+  transform:translate(-50%,-50%);
+
+  z-index:10;
+
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  gap:20px;
+}
+
+/* LOGO */
+
+#logo{
+
+  width:340px;
+
+  animation:
+    floatLogo 4s ease-in-out infinite;
+
+  filter:
+    drop-shadow(0 0 12px rgba(0,150,255,0.35));
+
+  user-select:none;
+  pointer-events:none;
+}
+
+/* FLOATING ANIMATION */
+
+@keyframes floatLogo{
+
+  0%{
+    transform:
+      translateY(0px)
+      scale(1);
+  }
+
+  50%{
+    transform:
+      translateY(-8px)
+      scale(1.015);
+  }
+
+  100%{
+    transform:
+      translateY(0px)
+      scale(1);
+  }
+}
+
+/* FILE PICKER */
+
+#folderInput{
+
+  color:white;
+
+  background:
+    rgba(255,255,255,0.08);
+
+  border:
+    1px solid rgba(255,255,255,0.15);
+
+  border-radius:14px;
+
+  padding:14px;
+
+  font-size:16px;
+
+  backdrop-filter:blur(10px);
+
+  cursor:pointer;
+}
+
+/* BUTTONS */
+
+button{
+
+  background:
+    rgba(20,20,20,0.92);
+
+  color:white;
+
+  border:none;
+
+  border-radius:12px;
+
+  padding:12px 22px;
+
+  font-size:16px;
+
+  cursor:pointer;
+
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+
+button:hover{
+
+  transform:scale(1.05);
+
+  background:
+    rgba(40,40,40,0.95);
+}
+
+</style>
+
 </head>
+
 <body>
-  <div id="ui">
-    <img id="introLogo" src="3D Pano VieweR Logo.png" alt="3D Pano VieweR logo" />
-    <div id="fileBrowserControls">
-      <h1>3D Pano VieweR</h1>
-      <p class="subtitle">Load photo spheres or Cardboard Camera top/bottom stereo panoramas.</p>
-      <label class="picker-title" for="fileInput">Choose Image Files</label>
-      <button id="selectFilesButton" type="button">Select Files</button>
-      <input class="picker-input hidden-file-input" type="file" id="fileInput" accept="image/*,.jpg,.jpeg,.png,.webp,.gif,.bmp,.avif,.heic,.heif,.vr.jpg" multiple />
-      <div class="button-row">
-        <button id="demoPicturesButton" type="button">Demo Pictures</button>
-        <button id="clearFilesButton" type="button">Clear Files</button>
-      </div>
-      <div id="loading">Loading files...</div>
-      <div id="fileCount">0 image files loaded</div>
-    </div>
-    <button id="enterVrButton" type="button">Enter VR Gallery</button>
-  </div>
 
-  <canvas id="xr-canvas"></canvas>
+<div id="ui">
 
-  <script type="module" src="app.js"></script>
+  <img
+    id="logo"
+    src="3D Pano VieweR Logo.png"
+    alt="3D Pano VieweR Logo"
+  />
+
+  <input
+    type="file"
+    id="folderInput"
+    webkitdirectory
+    multiple
+  />
+
+</div>
+
+<canvas id="xr-canvas"></canvas>
+
+<script type="module" src="app.js"></script>
+
 </body>
 </html>

@@ -20,6 +20,9 @@ let hands = [];
 let interactiveObjects = [];
 
 let loadedFiles = [];
+let imageFiles = [];
+
+let currentImageIndex = -1;
 
 let currentAudio = null;
 
@@ -28,10 +31,17 @@ let audioEnabled = true;
 let raycaster = new THREE.Raycaster();
 let tempMatrix = new THREE.Matrix4();
 
-let backButton;
-let muteButton;
+let menuGroup;
 
-let backTimer = null;
+let backButton;
+let nextButton;
+let prevButton;
+let muteButton;
+let exitButton;
+
+let loadingText;
+
+let menuTimer = null;
 
 ////////////////////////////////////////////////////
 
@@ -46,7 +56,7 @@ function init(){
 
   camera = new THREE.PerspectiveCamera(
     75,
-    window.innerWidth / window.innerHeight,
+    window.innerWidth/window.innerHeight,
     0.1,
     1000
   );
@@ -63,15 +73,21 @@ function init(){
     window.innerHeight
   );
 
+  renderer.setPixelRatio(
+    Math.min(window.devicePixelRatio,1.5)
+  );
+
   renderer.xr.enabled = true;
 
   createEnterVRButton();
 
+  createEnvironment();
+
   createStereoSphere();
 
-  createBackButton();
+  createMenu();
 
-  createMuteButton();
+  createLoadingIndicator();
 
   setupControllers();
 
@@ -87,28 +103,61 @@ function init(){
 
 ////////////////////////////////////////////////////
 
+function createEnvironment(){
+
+  const geo =
+    new THREE.SphereGeometry(
+      200,
+      32,
+      32
+    );
+
+  geo.scale(-1,1,1);
+
+  const mat =
+    new THREE.MeshBasicMaterial({
+      color:0x050505
+    });
+
+  const env =
+    new THREE.Mesh(geo,mat);
+
+  scene.add(env);
+}
+
+////////////////////////////////////////////////////
+
 function createEnterVRButton(){
 
-  const btn = document.createElement("button");
+  const btn =
+    document.createElement("button");
 
-  btn.innerText = "Enter VR Gallery";
+  btn.innerText =
+    "Enter VR Gallery";
 
-  btn.style.position = "absolute";
+  btn.style.position =
+    "absolute";
 
-  btn.style.bottom = "30px";
+  btn.style.bottom =
+    "30px";
 
-  btn.style.left = "50%";
+  btn.style.left =
+    "50%";
 
   btn.style.transform =
     "translateX(-50%)";
 
-  btn.style.fontSize = "18px";
+  btn.style.fontSize =
+    "18px";
 
-  btn.style.padding = "14px 24px";
+  btn.style.padding =
+    "14px 24px";
 
-  btn.style.zIndex = "999";
+  btn.style.zIndex =
+    "999";
 
-  btn.style.display = "none";
+  btn.style.display =
+    "none";
 
   document.body.appendChild(btn);
 
@@ -128,12 +177,13 @@ function createEnterVRButton(){
 
     vrBtn.click();
 
-    btn.style.display = "none";
+    btn.style.display =
+      "none";
 
     document.getElementById("ui")
       .style.display = "none";
 
-    createGallery(loadedFiles);
+    createGallery(imageFiles);
   };
 
   window.enterVRButton = btn;
@@ -146,8 +196,8 @@ function createStereoSphere(){
   const geometry =
     new THREE.SphereGeometry(
       50,
-      64,
-      64
+      128,
+      128
     );
 
   geometry.scale(-1,1,1);
@@ -156,8 +206,11 @@ function createStereoSphere(){
     new THREE.ShaderMaterial({
 
       uniforms:{
-        pano:{value:null}
+        pano:{value:null},
+        eyeIndex:{value:0}
       },
+
+      transparent:true,
 
       vertexShader:`
 
@@ -177,6 +230,7 @@ function createStereoSphere(){
       fragmentShader:`
 
         uniform sampler2D pano;
+        uniform int eyeIndex;
 
         varying vec2 vUv;
 
@@ -184,11 +238,17 @@ function createStereoSphere(){
 
           vec2 uv = vUv;
 
-          #ifdef VIEW_LEFT
-            uv.y = uv.y * 0.5;
-          #else
-            uv.y = 0.5 + (uv.y * 0.5);
-          #endif
+          if(eyeIndex == 0){
+
+            uv.y =
+              0.5 +
+              (uv.y * 0.5);
+
+          }else{
+
+            uv.y =
+              uv.y * 0.5;
+          }
 
           gl_FragColor =
             texture2D(pano,uv);
@@ -202,77 +262,313 @@ function createStereoSphere(){
       material
     );
 
-  sphereMesh.visible = false;
+  sphereMesh.visible =
+    false;
+
+  sphereMesh.onBeforeRender =
+    (
+      renderer,
+      scene,
+      camera
+    ) => {
+
+      if(camera.isArrayCamera){
+        return;
+      }
+
+      const eye =
+        camera.viewport?.x || 0;
+
+      sphereMesh.material
+        .uniforms
+        .eyeIndex
+        .value =
+          eye === 0 ? 0 : 1;
+    };
 
   scene.add(sphereMesh);
 }
 
 ////////////////////////////////////////////////////
 
-function createBackButton(){
+function createMenu(){
 
-  const geo =
-    new THREE.PlaneGeometry(
-      0.5,
-      0.2
-    );
-
-  const mat =
-    new THREE.MeshBasicMaterial({
-      color:0x222222
-    });
+  menuGroup =
+    new THREE.Group();
 
   backButton =
-    new THREE.Mesh(geo,mat);
+    createMenuButton(
+      "BACK",
+      -0.6,
+      0
+    );
 
-  backButton.position.set(
-    0,
-    1.2,
-    -1
-  );
+  prevButton =
+    createMenuButton(
+      "PREV",
+      -1.2,
+      0
+    );
 
-  backButton.visible = false;
+  nextButton =
+    createMenuButton(
+      "NEXT",
+      0,
+      0
+    );
+
+  muteButton =
+    createMenuButton(
+      "MUTE",
+      0.6,
+      0
+    );
+
+  exitButton =
+    createMenuButton(
+      "EXIT",
+      -0.3,
+      -0.35
+    );
 
   backButton.userData.onClick =
     showGallery;
 
-  scene.add(backButton);
+  nextButton.userData.onClick =
+    nextImage;
 
-  interactiveObjects.push(backButton);
-}
-
-////////////////////////////////////////////////////
-
-function createMuteButton(){
-
-  const geo =
-    new THREE.PlaneGeometry(
-      0.5,
-      0.2
-    );
-
-  const mat =
-    new THREE.MeshBasicMaterial({
-      color:0x444444
-    });
-
-  muteButton =
-    new THREE.Mesh(geo,mat);
-
-  muteButton.position.set(
-    0.7,
-    1.2,
-    -1
-  );
-
-  muteButton.visible = false;
+  prevButton.userData.onClick =
+    prevImage;
 
   muteButton.userData.onClick =
     toggleMute;
 
-  scene.add(muteButton);
+  exitButton.userData.onClick =
+    exitVR;
 
-  interactiveObjects.push(muteButton);
+  menuGroup.add(
+    backButton,
+    nextButton,
+    prevButton,
+    muteButton,
+    exitButton
+  );
+
+  menuGroup.visible =
+    false;
+
+  scene.add(menuGroup);
+
+  interactiveObjects.push(
+    backButton,
+    nextButton,
+    prevButton,
+    muteButton,
+    exitButton
+  );
+}
+
+////////////////////////////////////////////////////
+
+function createMenuButton(
+  text,
+  x,
+  y
+){
+
+  const geo =
+    new THREE.PlaneGeometry(
+      0.45,
+      0.18
+    );
+
+  const canvas =
+    document.createElement(
+      "canvas"
+    );
+
+  canvas.width = 256;
+  canvas.height = 128;
+
+  const ctx =
+    canvas.getContext("2d");
+
+  ctx.fillStyle = "#222";
+
+  ctx.fillRect(
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  ctx.fillStyle = "white";
+
+  ctx.font =
+    "bold 42px sans-serif";
+
+  ctx.textAlign =
+    "center";
+
+  ctx.textBaseline =
+    "middle";
+
+  ctx.fillText(
+    text,
+    128,
+    64
+  );
+
+  const tex =
+    new THREE.Texture(canvas);
+
+  tex.needsUpdate = true;
+
+  const mat =
+    new THREE.MeshBasicMaterial({
+      map:tex,
+      transparent:true
+    });
+
+  const mesh =
+    new THREE.Mesh(
+      geo,
+      mat
+    );
+
+  mesh.position.set(
+    x,
+    y,
+    0
+  );
+
+  return mesh;
+}
+
+////////////////////////////////////////////////////
+
+function createLoadingIndicator(){
+
+  const canvas =
+    document.createElement(
+      "canvas"
+    );
+
+  canvas.width = 512;
+  canvas.height = 128;
+
+  const ctx =
+    canvas.getContext("2d");
+
+  ctx.fillStyle = "white";
+
+  ctx.font =
+    "bold 48px sans-serif";
+
+  ctx.textAlign =
+    "center";
+
+  ctx.fillText(
+    "Loading...",
+    256,
+    64
+  );
+
+  const tex =
+    new THREE.Texture(canvas);
+
+  tex.needsUpdate = true;
+
+  const mat =
+    new THREE.MeshBasicMaterial({
+      map:tex,
+      transparent:true
+    });
+
+  loadingText =
+    new THREE.Mesh(
+
+      new THREE.PlaneGeometry(
+        1,
+        0.25
+      ),
+
+      mat
+    );
+
+  loadingText.position.set(
+    0,
+    1.5,
+    -2
+  );
+
+  loadingText.visible =
+    false;
+
+  scene.add(loadingText);
+}
+
+////////////////////////////////////////////////////
+
+function showMenu(){
+
+  const dir =
+    new THREE.Vector3();
+
+  camera.getWorldDirection(dir);
+
+  menuGroup.position.copy(
+    camera.position
+  ).add(
+    dir.multiplyScalar(1.5)
+  );
+
+  menuGroup.lookAt(
+    camera.position
+  );
+
+  menuGroup.visible = true;
+
+  menuGroup.scale.set(
+    0.85,
+    0.85,
+    0.85
+  );
+
+  let t = 0;
+
+  const i =
+    setInterval(()=>{
+
+      t += 0.08;
+
+      menuGroup.scale.lerp(
+        new THREE.Vector3(1,1,1),
+        t
+      );
+
+      if(t >= 1){
+        clearInterval(i);
+      }
+
+    },16);
+
+  if(menuTimer){
+    clearTimeout(menuTimer);
+  }
+
+  menuTimer =
+    setTimeout(()=>{
+      hideMenu();
+    },4000);
+}
+
+////////////////////////////////////////////////////
+
+function hideMenu(){
+
+  menuGroup.visible =
+    false;
 }
 
 ////////////////////////////////////////////////////
@@ -287,46 +583,77 @@ function toggleMute(){
     currentAudio.muted =
       !audioEnabled;
   }
+
+  hideMenu();
 }
 
 ////////////////////////////////////////////////////
 
-function showBackButton(){
+function nextImage(){
 
-  backButton.visible = true;
+  if(
+    currentImageIndex <
+    imageFiles.length - 1
+  ){
 
-  muteButton.visible = true;
+    currentImageIndex++;
 
-  if(backTimer){
-
-    clearTimeout(backTimer);
+    loadStereoImage(
+      imageFiles[
+        currentImageIndex
+      ]
+    );
   }
 
-  backTimer =
-    setTimeout(()=>{
+  hideMenu();
+}
 
-      backButton.visible = false;
+////////////////////////////////////////////////////
 
-      muteButton.visible = false;
+function prevImage(){
 
-    },4000);
+  if(currentImageIndex > 0){
+
+    currentImageIndex--;
+
+    loadStereoImage(
+      imageFiles[
+        currentImageIndex
+      ]
+    );
+  }
+
+  hideMenu();
 }
 
 ////////////////////////////////////////////////////
 
 function showGallery(){
 
-  sphereMesh.visible = false;
+  sphereMesh.visible =
+    false;
 
-  backButton.visible = false;
+  setPointerVisibility(true);
 
-  muteButton.visible = false;
+  hideMenu();
 
   if(currentAudio){
 
     currentAudio.pause();
 
     currentAudio = null;
+  }
+}
+
+////////////////////////////////////////////////////
+
+function exitVR(){
+
+  const session =
+    renderer.xr.getSession();
+
+  if(session){
+    session.end();
   }
 }
 
@@ -346,7 +673,7 @@ function setupControllers(){
       'selectstart',
       ()=>{
 
-        showBackButton();
+        showMenu();
 
         c.userData.selectPressed =
           true;
@@ -362,10 +689,57 @@ function setupControllers(){
       }
     );
 
+    const geometry =
+      new THREE.BufferGeometry()
+        .setFromPoints([
+
+          new THREE.Vector3(0,0,0),
+
+          new THREE.Vector3(0,0,-1)
+
+        ]);
+
+    const line =
+      new THREE.Line(
+
+        geometry,
+
+        new THREE.LineBasicMaterial({
+          color:0x66ccff
+        })
+      );
+
+    line.name = "pointer";
+
+    line.scale.z = 5;
+
+    c.add(line);
+
     scene.add(c);
 
     controllers.push(c);
   }
+}
+
+////////////////////////////////////////////////////
+
+function setPointerVisibility(
+  visible
+){
+
+  controllers.forEach(c=>{
+
+    const pointer =
+      c.getObjectByName(
+        "pointer"
+      );
+
+    if(pointer){
+
+      pointer.visible =
+        visible;
+    }
+  });
 }
 
 ////////////////////////////////////////////////////
@@ -460,9 +834,9 @@ function handleHand(hand){
       hits[0].object;
 
     obj.scale.set(
-      1.2,
-      1.2,
-      1.2
+      1.15,
+      1.15,
+      1.15
     );
 
     if(
@@ -470,7 +844,7 @@ function handleHand(hand){
       !hand.userData.isPinching
     ){
 
-      showBackButton();
+      showMenu();
 
       obj.userData.onClick();
     }
@@ -514,10 +888,23 @@ function handleController(c){
       hits[0].object;
 
     obj.scale.set(
-      1.2,
-      1.2,
-      1.2
+      1.15,
+      1.15,
+      1.15
     );
+
+    const gp =
+      c.gamepad;
+
+    if(
+      gp &&
+      gp.hapticActuators &&
+      gp.hapticActuators.length > 0
+    ){
+
+      gp.hapticActuators[0]
+        .pulse(0.2,30);
+    }
 
     if(c.userData.selectPressed){
 
@@ -543,6 +930,14 @@ function setupFolderInput(){
             e.target.files
           );
 
+        imageFiles =
+          loadedFiles.filter(f=>
+
+            f.type.startsWith(
+              "image"
+            )
+          );
+
         if(
           loadedFiles.length > 0
         ){
@@ -559,19 +954,9 @@ function setupFolderInput(){
 
 function createGallery(files){
 
-  clearGallery();
-
-  const imageFiles =
-    files.filter(f=>
-
-      f.type.startsWith(
-        "image"
-      )
-    );
-
   const r = 2.5;
 
-  imageFiles.forEach(
+  files.forEach(
     async(file,i)=>{
 
       const angle =
@@ -581,7 +966,7 @@ function createGallery(files){
           i *
           (
             Math.PI /
-            imageFiles.length
+            files.length
           )
         );
 
@@ -614,34 +999,21 @@ function createGallery(files){
       );
 
       mesh.userData.onClick =
-        ()=>loadStereoImage(file);
+        ()=>{
+
+          currentImageIndex =
+            imageFiles.indexOf(
+              file
+            );
+
+          loadStereoImage(file);
+        };
 
       scene.add(mesh);
 
       interactiveObjects.push(mesh);
     }
   );
-}
-
-////////////////////////////////////////////////////
-
-function clearGallery(){
-
-  interactiveObjects.forEach(o=>{
-
-    if(
-      o !== backButton &&
-      o !== muteButton
-    ){
-
-      scene.remove(o);
-    }
-  });
-
-  interactiveObjects = [
-    backButton,
-    muteButton
-  ];
 }
 
 ////////////////////////////////////////////////////
@@ -662,7 +1034,6 @@ async function createThumbnail(file){
     );
 
   c.width = 256;
-
   c.height = 128;
 
   c.getContext("2d")
@@ -688,6 +1059,9 @@ async function loadStereoImage(
   imageFile
 ){
 
+  loadingText.visible =
+    true;
+
   const img =
     new Image();
 
@@ -701,18 +1075,93 @@ async function loadStereoImage(
   const texture =
     new THREE.Texture(img);
 
-  texture.needsUpdate = true;
+  texture.colorSpace =
+    THREE.SRGBColorSpace;
 
-  sphereMesh.material
-    .uniforms
-    .pano
-    .value = texture;
+  texture.needsUpdate =
+    true;
 
-  sphereMesh.visible = true;
+  texture.minFilter =
+    THREE.LinearFilter;
 
-  playMatchingAudio(
-    imageFile.name
-  );
+  texture.magFilter =
+    THREE.LinearFilter;
+
+  texture.generateMipmaps =
+    false;
+
+  fadeOutSphere(()=>{
+
+    sphereMesh.material
+      .uniforms
+      .pano.value = texture;
+
+    sphereMesh.visible =
+      true;
+
+    playMatchingAudio(
+      imageFile.name
+    );
+
+    setPointerVisibility(
+      false
+    );
+
+    fadeInSphere();
+
+    loadingText.visible =
+      false;
+  });
+}
+
+////////////////////////////////////////////////////
+
+function fadeOutSphere(cb){
+
+  sphereMesh.material.opacity =
+    1;
+
+  const i =
+    setInterval(()=>{
+
+      sphereMesh.material.opacity
+        -= 0.08;
+
+      if(
+        sphereMesh.material.opacity
+        <= 0
+      ){
+
+        clearInterval(i);
+
+        cb();
+      }
+
+    },16);
+}
+
+////////////////////////////////////////////////////
+
+function fadeInSphere(){
+
+  sphereMesh.material.opacity =
+    0;
+
+  const i =
+    setInterval(()=>{
+
+      sphereMesh.material.opacity
+        += 0.08;
+
+      if(
+        sphereMesh.material.opacity
+        >= 1
+      ){
+
+        clearInterval(i);
+      }
+
+    },16);
 }
 
 ////////////////////////////////////////////////////
@@ -754,7 +1203,8 @@ function playMatchingAudio(
       audioFile
     );
 
-  currentAudio.loop = true;
+  currentAudio.loop =
+    true;
 
   currentAudio.muted =
     !audioEnabled;

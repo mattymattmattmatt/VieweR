@@ -13,11 +13,24 @@
 
 <style>
 
+html,
+body{
+  width:100%;
+  height:100%;
+}
+
 body{
   margin:0;
   overflow:hidden;
   background:black;
   font-family:sans-serif;
+  touch-action:none;
+}
+
+#xr-canvas{
+  display:block;
+  width:100vw;
+  height:100vh;
 }
 
 /* UI PANEL */
@@ -167,6 +180,14 @@ button:disabled{
 
 <canvas id="xr-canvas"></canvas>
 
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
 <script type="module" src="app.js"></script>
 
 </body>

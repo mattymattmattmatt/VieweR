@@ -133,6 +133,15 @@ button:hover{
     rgba(40,40,40,0.95);
 }
 
+button:disabled{
+
+  opacity:0.55;
+
+  cursor:not-allowed;
+
+  transform:none;
+}
+
 </style>
 
 </head>
@@ -150,7 +159,7 @@ button:hover{
   <input
     type="file"
     id="folderInput"
-    webkitdirectory
+    accept="image/*,audio/*,video/*"
     multiple
   />
 

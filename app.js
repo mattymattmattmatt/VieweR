@@ -1,5 +1,5 @@
-import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160/build/three.module.js';
-import { XRHandModelFactory } from 'https://cdn.jsdelivr.net/npm/three@0.160/examples/jsm/webxr/XRHandModelFactory.js';
+import * as THREE from 'three';
+import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
 const THUMBNAIL_COLUMNS = 6;
@@ -27,6 +27,8 @@ let audioEnabled = true;
 let menuTimer = null;
 let interactionLocked = false;
 let xrSessionActive = false;
+let xrSupported = false;
+let xrSupportChecked = false;
 
 const raycaster = new THREE.Raycaster();
 const tempMatrix = new THREE.Matrix4();
@@ -53,12 +55,13 @@ function init() {
   renderer.xr.enabled = true;
 
   createEnterVRButton();
+  createStatusMessage();
+  checkWebXRSupport();
   createEnvironment();
   createStereoSphere();
   createGallery();
   createMenu();
   createLoadingIndicator();
-  createStatusMessage();
   setupControllers();
   setupHands();
   setupFolderInput();
@@ -84,16 +87,36 @@ function createEnterVRButton() {
   enterVRButton.type = 'button';
   enterVRButton.textContent = 'Choose images to enable VR';
   enterVRButton.disabled = true;
-  enterVRButton.style.position = 'absolute';
-  enterVRButton.style.bottom = '30px';
-  enterVRButton.style.left = '50%';
-  enterVRButton.style.transform = 'translateX(-50%)';
   enterVRButton.style.fontSize = '18px';
   enterVRButton.style.padding = '14px 24px';
   enterVRButton.style.zIndex = '999';
 
   enterVRButton.addEventListener('click', enterVR);
-  document.body.appendChild(enterVRButton);
+  document.getElementById('ui').appendChild(enterVRButton);
+}
+
+async function checkWebXRSupport() {
+  if (!navigator.xr) {
+    xrSupportChecked = true;
+    xrSupported = false;
+    updateEnterVRButton();
+    updateStatus('WebXR is not available here. On Quest 3, open this page in Meta Quest Browser over HTTPS.');
+    return;
+  }
+
+  try {
+    xrSupported = await navigator.xr.isSessionSupported('immersive-vr');
+  } catch (error) {
+    console.warn('Unable to check immersive-vr support:', error);
+    xrSupported = false;
+  }
+
+  xrSupportChecked = true;
+  updateEnterVRButton();
+
+  if (!xrSupported) {
+    updateStatus('Immersive VR is not supported in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
+  }
 }
 
 async function enterVR() {
@@ -102,19 +125,27 @@ async function enterVR() {
   }
 
   if (!navigator.xr) {
-    updateStatus('WebXR is not available in this browser. Use a WebXR-capable headset browser over HTTPS.');
+    updateStatus('WebXR is not available here. On Quest 3, open this page in Meta Quest Browser over HTTPS.');
     return;
   }
 
-  const supported = await navigator.xr.isSessionSupported('immersive-vr');
-  if (!supported) {
-    updateStatus('Immersive VR is not supported on this device/browser.');
+  if (xrSupportChecked && !xrSupported) {
+    updateStatus('Immersive VR is not supported in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
     return;
   }
 
-  const session = await navigator.xr.requestSession('immersive-vr', {
-    optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
-  });
+  let session;
+  try {
+    // Keep requestSession as the first awaited WebXR call in the click handler so
+    // Quest Browser still treats it as a user-initiated action.
+    session = await navigator.xr.requestSession('immersive-vr', {
+      optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+    });
+  } catch (error) {
+    console.error('Unable to start immersive-vr session:', error);
+    updateStatus(`Could not enter VR: ${error.message || 'the browser rejected the WebXR session request.'}`);
+    return;
+  }
 
   await renderer.xr.setSession(session);
   xrSessionActive = true;
@@ -356,8 +387,39 @@ function createStatusMessage() {
 }
 
 function updateStatus(message) {
+  if (!statusMessage) {
+    return;
+  }
+
   statusMessage.textContent = message;
   statusMessage.style.display = message ? 'block' : 'none';
+}
+
+function updateEnterVRButton() {
+  if (!enterVRButton) {
+    return;
+  }
+
+  if (!imageFiles.length) {
+    enterVRButton.disabled = true;
+    enterVRButton.textContent = 'Choose images to enable VR';
+    return;
+  }
+
+  if (!xrSupportChecked) {
+    enterVRButton.disabled = true;
+    enterVRButton.textContent = 'Checking VR support...';
+    return;
+  }
+
+  if (!xrSupported) {
+    enterVRButton.disabled = true;
+    enterVRButton.textContent = 'VR not available in this browser';
+    return;
+  }
+
+  enterVRButton.disabled = false;
+  enterVRButton.textContent = `Enter VR (${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'})`;
 }
 
 function showMenu() {
@@ -432,8 +494,7 @@ function handleSessionEnd() {
   setPointerVisibility(true);
   document.getElementById('ui').style.display = 'flex';
   enterVRButton.style.display = 'block';
-  enterVRButton.disabled = imageFiles.length === 0;
-  enterVRButton.textContent = imageFiles.length ? 'Enter VR' : 'Choose images to enable VR';
+  updateEnterVRButton();
 
   if (currentAudio) {
     currentAudio.pause();
@@ -614,15 +675,18 @@ function setupFolderInput() {
     loadedFiles = Array.from(event.target.files);
     imageFiles = loadedFiles.filter((file) => file.type.startsWith('image/') || SUPPORTED_IMAGE_TYPES.includes(file.type));
 
+    updateEnterVRButton();
+
     if (!imageFiles.length) {
-      enterVRButton.disabled = true;
-      enterVRButton.textContent = 'Choose images to enable VR';
       updateStatus('No supported images were found. Select a folder containing top/bottom stereo 360 images.');
       return;
     }
 
-    enterVRButton.disabled = false;
-    enterVRButton.textContent = `Enter VR (${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'})`;
+    if (xrSupportChecked && !xrSupported) {
+      updateStatus('Images loaded, but immersive VR is not available in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
+      return;
+    }
+
     updateStatus('Ready. Put on your headset, press Enter VR, then point at a thumbnail and press trigger.');
   });
 }

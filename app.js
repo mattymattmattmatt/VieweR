@@ -3,6 +3,8 @@ import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
 const THUMBNAIL_COLUMNS = 6;
+const MENU_BUTTON_HEIGHT = 0.22;
+const MENU_BUTTON_SPACING = 0.18;
 
 let scene;
 let camera;
@@ -154,7 +156,13 @@ async function enterVR() {
   statusMessage.style.display = 'none';
 
   populateGallery(imageFiles);
-  showGallery();
+
+  if (imageFiles.length === 1) {
+    currentImageIndex = 0;
+    loadStereoImage(imageFiles[0]);
+  } else {
+    showGallery();
+  }
 }
 
 function createStereoSphere() {
@@ -282,11 +290,11 @@ function createMenu() {
   menuGroup = new THREE.Group();
   menuGroup.visible = false;
 
-  const backButton = createMenuButton('THUMBNAILS', -0.86, 0.18, 0.7, 0.2);
-  const prevButton = createMenuButton('PREV', -0.28, 0.18, 0.45, 0.2);
-  const nextButton = createMenuButton('NEXT', 0.28, 0.18, 0.45, 0.2);
-  const muteButton = createMenuButton('MUTE', 0.82, 0.18, 0.45, 0.2);
-  const exitButton = createMenuButton('EXIT VR', 0, -0.16, 0.62, 0.2);
+  const backButton = createMenuButton('THUMBNAILS', -1.25, 0.18, 0.78, MENU_BUTTON_HEIGHT);
+  const prevButton = createMenuButton('PREV', -0.4, 0.18, 0.5, MENU_BUTTON_HEIGHT);
+  const nextButton = createMenuButton('NEXT', 0.4, 0.18, 0.5, MENU_BUTTON_HEIGHT);
+  const muteButton = createMenuButton('MUTE', 1.15, 0.18, 0.5, MENU_BUTTON_HEIGHT);
+  const exitButton = createMenuButton('EXIT VR', 0, -0.2 - MENU_BUTTON_SPACING, 0.7, MENU_BUTTON_HEIGHT);
 
   backButton.userData.onClick = showGallery;
   prevButton.userData.onClick = prevImage;
@@ -330,10 +338,10 @@ function createButtonTexture(text) {
   ctx.stroke();
 
   ctx.fillStyle = 'white';
-  ctx.font = 'bold 50px sans-serif';
+  ctx.font = 'bold 44px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2, canvas.width - 48);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -372,18 +380,16 @@ function createLoadingIndicator() {
 function createStatusMessage() {
   statusMessage = document.createElement('div');
   statusMessage.id = 'statusMessage';
-  statusMessage.style.position = 'absolute';
-  statusMessage.style.left = '50%';
-  statusMessage.style.bottom = '92px';
-  statusMessage.style.transform = 'translateX(-50%)';
-  statusMessage.style.zIndex = '1000';
   statusMessage.style.maxWidth = '620px';
   statusMessage.style.padding = '12px 18px';
   statusMessage.style.borderRadius = '12px';
   statusMessage.style.color = 'white';
   statusMessage.style.background = 'rgba(0,0,0,0.72)';
   statusMessage.style.display = 'none';
-  document.body.appendChild(statusMessage);
+  statusMessage.style.textAlign = 'center';
+  statusMessage.style.lineHeight = '1.35';
+  statusMessage.style.pointerEvents = 'none';
+  document.getElementById('ui').appendChild(statusMessage);
 }
 
 function updateStatus(message) {
@@ -674,6 +680,7 @@ function setupFolderInput() {
   document.getElementById('folderInput').addEventListener('change', (event) => {
     loadedFiles = Array.from(event.target.files);
     imageFiles = loadedFiles.filter((file) => file.type.startsWith('image/') || SUPPORTED_IMAGE_TYPES.includes(file.type));
+    currentImageIndex = -1;
 
     updateEnterVRButton();
 
@@ -687,7 +694,12 @@ function setupFolderInput() {
       return;
     }
 
-    updateStatus('Ready. Put on your headset, press Enter VR, then point at a thumbnail and press trigger.');
+    if (imageFiles.length === 1) {
+      updateStatus('Ready. Press Enter VR to open the selected panorama.');
+      return;
+    }
+
+    updateStatus('Ready. Press Enter VR, then point at a thumbnail and press trigger.');
   });
 }
 
@@ -714,30 +726,42 @@ async function loadStereoImage(imageFile) {
   hideMenu();
 
   const url = URL.createObjectURL(imageFile);
-  const image = new Image();
-  image.src = url;
-  await image.decode();
 
-  const texture = new THREE.Texture(image);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  texture.minFilter = THREE.LinearFilter;
-  texture.magFilter = THREE.LinearFilter;
-  texture.generateMipmaps = false;
-  texture.needsUpdate = true;
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
 
-  fadeOutSphere(() => {
-    const oldTexture = sphereMesh.material.uniforms.pano.value;
-    sphereMesh.material.uniforms.pano.value = texture;
-    oldTexture?.dispose?.();
+    const texture = new THREE.Texture(image);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    texture.needsUpdate = true;
 
-    sphereMesh.visible = true;
-    sphereMesh.material.uniforms.opacity.value = 0;
-    playMatchingAudio(imageFile.name);
-    setPointerVisibility(true);
+    fadeOutSphere(() => {
+      const oldTexture = sphereMesh.material.uniforms.pano.value;
+      sphereMesh.material.uniforms.pano.value = texture;
+      oldTexture?.dispose?.();
+
+      sphereMesh.visible = true;
+      sphereMesh.material.uniforms.opacity.value = 0;
+      playMatchingAudio(imageFile.name);
+      setPointerVisibility(true);
+      loadingText.visible = false;
+      URL.revokeObjectURL(url);
+      fadeInSphere();
+    });
+  } catch (error) {
+    console.error('Unable to load panorama:', error);
     loadingText.visible = false;
     URL.revokeObjectURL(url);
-    fadeInSphere();
-  });
+    updateStatus(`Could not load ${imageFile.name}. Try a JPEG, PNG, WebP, or AVIF panorama.`);
+
+    if (xrSessionActive) {
+      showGallery();
+    }
+  }
 }
 
 function fadeOutSphere(callback) {

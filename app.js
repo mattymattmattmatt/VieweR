@@ -6,6 +6,11 @@ const THUMBNAIL_COLUMNS = 6;
 const MENU_BUTTON_HEIGHT = 0.22;
 const MENU_BUTTON_SPACING = 0.18;
 
+// Thumbstick rotation: snap the panorama in 30° increments.
+const ROTATION_STEP = Math.PI / 6;
+const STICK_TRIGGER = 0.6;
+const STICK_RELEASE = 0.3;
+
 let scene;
 let camera;
 let renderer;
@@ -26,8 +31,8 @@ let imageFiles = [];
 let currentImageIndex = -1;
 let currentAudio = null;
 let audioEnabled = true;
-let menuTimer = null;
 let interactionLocked = false;
+let sphereTargetRotationY = 0;
 let xrSessionActive = false;
 let xrSupported = false;
 let xrSupportChecked = false;
@@ -290,19 +295,19 @@ function createMenu() {
   menuGroup = new THREE.Group();
   menuGroup.visible = false;
 
-  const backButton = createMenuButton('THUMBNAILS', -1.25, 0.18, 0.78, MENU_BUTTON_HEIGHT);
-  const prevButton = createMenuButton('PREV', -0.4, 0.18, 0.5, MENU_BUTTON_HEIGHT);
-  const nextButton = createMenuButton('NEXT', 0.4, 0.18, 0.5, MENU_BUTTON_HEIGHT);
-  const muteButton = createMenuButton('MUTE', 1.15, 0.18, 0.5, MENU_BUTTON_HEIGHT);
-  const exitButton = createMenuButton('EXIT VR', 0, -0.2 - MENU_BUTTON_SPACING, 0.7, MENU_BUTTON_HEIGHT);
+  const rowOffset = (MENU_BUTTON_HEIGHT + MENU_BUTTON_SPACING) / 2;
 
-  backButton.userData.onClick = showGallery;
-  prevButton.userData.onClick = prevImage;
-  nextButton.userData.onClick = nextImage;
+  const thumbnailsButton = createMenuButton('THUMBNAILS', -0.46, rowOffset, 0.84, MENU_BUTTON_HEIGHT);
+  const loadAnotherButton = createMenuButton('LOAD ANOTHER', 0.46, rowOffset, 0.84, MENU_BUTTON_HEIGHT);
+  const muteButton = createMenuButton('MUTE', -0.46, -rowOffset, 0.84, MENU_BUTTON_HEIGHT);
+  const cancelButton = createMenuButton('CANCEL', 0.46, -rowOffset, 0.84, MENU_BUTTON_HEIGHT);
+
+  thumbnailsButton.userData.onClick = showGallery;
+  loadAnotherButton.userData.onClick = exitVR;
   muteButton.userData.onClick = toggleMute;
-  exitButton.userData.onClick = exitVR;
+  cancelButton.userData.onClick = hideMenu;
 
-  [backButton, prevButton, nextButton, muteButton, exitButton].forEach((button) => {
+  [thumbnailsButton, loadAnotherButton, muteButton, cancelButton].forEach((button) => {
     menuGroup.add(button);
     interactiveObjects.push(button);
   });
@@ -428,6 +433,18 @@ function updateEnterVRButton() {
   enterVRButton.textContent = `Enter VR (${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'})`;
 }
 
+function toggleMenu() {
+  if (!xrSessionActive) {
+    return;
+  }
+
+  if (menuGroup.visible) {
+    hideMenu();
+  } else {
+    showMenu();
+  }
+}
+
 function showMenu() {
   if (!xrSessionActive) {
     return;
@@ -436,12 +453,6 @@ function showMenu() {
   positionGroupInFrontOfCamera(menuGroup, 1.7);
   menuGroup.visible = true;
   menuGroup.scale.setScalar(1);
-
-  if (menuTimer) {
-    clearTimeout(menuTimer);
-  }
-
-  menuTimer = setTimeout(hideMenu, 9000);
 }
 
 function hideMenu() {
@@ -452,22 +463,6 @@ function toggleMute() {
   audioEnabled = !audioEnabled;
   if (currentAudio) {
     currentAudio.muted = !audioEnabled;
-  }
-  hideMenu();
-}
-
-function nextImage() {
-  if (currentImageIndex < imageFiles.length - 1) {
-    currentImageIndex += 1;
-    loadStereoImage(imageFiles[currentImageIndex]);
-  }
-  hideMenu();
-}
-
-function prevImage() {
-  if (currentImageIndex > 0) {
-    currentImageIndex -= 1;
-    loadStereoImage(imageFiles[currentImageIndex]);
   }
   hideMenu();
 }
@@ -511,14 +506,22 @@ function handleSessionEnd() {
 function setupControllers() {
   for (let i = 0; i < 2; i += 1) {
     const controller = renderer.xr.getController(i);
+    controller.userData.stickActive = false;
+    controller.userData.menuPressed = false;
 
-    controller.addEventListener('selectstart', () => {
-      if (!clickFromRay(controller)) {
-        showMenu();
-      }
+    // The targetRaySpace returned by getController does not expose the gamepad
+    // directly, so grab the live XRInputSource gamepad from the connect event.
+    controller.addEventListener('connected', (event) => {
+      controller.userData.gamepad = event.data.gamepad;
+    });
+    controller.addEventListener('disconnected', () => {
+      controller.userData.gamepad = null;
     });
 
-    controller.addEventListener('squeezestart', showMenu);
+    // Trigger is only for pointing/clicking; the menu is opened with B/Y.
+    controller.addEventListener('selectstart', () => {
+      clickFromRay(controller);
+    });
 
     const line = new THREE.Line(
       new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
@@ -581,7 +584,8 @@ function handleHand(hand) {
     if (hit) {
       runInteraction(hit.object);
     } else {
-      showMenu();
+      // Hand tracking has no B/Y button, so a pinch on empty space opens the menu.
+      toggleMenu();
     }
   }
 
@@ -593,6 +597,47 @@ function handleController(controller) {
   raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
   updateHoverState();
+}
+
+function pollControllerInput(controller) {
+  const gamepad = controller.userData.gamepad;
+  if (!gamepad) {
+    return;
+  }
+
+  // B / Y face button (xr-standard index 5) toggles the in-VR menu.
+  const menuPressed = gamepad.buttons[5]?.pressed ?? false;
+  if (menuPressed && !controller.userData.menuPressed) {
+    toggleMenu();
+    pulseController(controller);
+  }
+  controller.userData.menuPressed = menuPressed;
+
+  // Thumbstick left/right snaps the panorama in 30° increments while viewing.
+  const axes = gamepad.axes;
+  const stickX = axes.length >= 4 ? axes[2] : axes[0] ?? 0;
+
+  if (!sphereMesh.visible) {
+    controller.userData.stickActive = false;
+    return;
+  }
+
+  if (!controller.userData.stickActive) {
+    if (stickX > STICK_TRIGGER) {
+      rotateSphere(-1, controller);
+      controller.userData.stickActive = true;
+    } else if (stickX < -STICK_TRIGGER) {
+      rotateSphere(1, controller);
+      controller.userData.stickActive = true;
+    }
+  } else if (Math.abs(stickX) < STICK_RELEASE) {
+    controller.userData.stickActive = false;
+  }
+}
+
+function rotateSphere(direction, controller) {
+  sphereTargetRotationY += direction * ROTATION_STEP;
+  pulseController(controller);
 }
 
 function clickFromRay(controller) {
@@ -671,8 +716,7 @@ function resetInteractiveScales() {
 }
 
 function pulseController(controller) {
-  const gamepad = controller.gamepad;
-  const actuator = gamepad?.hapticActuators?.[0];
+  const actuator = controller?.userData?.gamepad?.hapticActuators?.[0];
   actuator?.pulse?.(0.25, 35);
 }
 
@@ -724,6 +768,10 @@ async function loadStereoImage(imageFile) {
   loadingText.visible = true;
   galleryGroup.visible = false;
   hideMenu();
+
+  // Start every panorama facing forward.
+  sphereTargetRotationY = 0;
+  sphereMesh.rotation.y = 0;
 
   const url = URL.createObjectURL(imageFile);
 
@@ -870,8 +918,17 @@ function disposeObject(object) {
 
 function animate() {
   renderer.setAnimationLoop(() => {
-    controllers.forEach(handleController);
+    controllers.forEach((controller) => {
+      handleController(controller);
+      pollControllerInput(controller);
+    });
     hands.forEach(handleHand);
+
+    // Ease toward the snapped target rotation for a smooth 30° step.
+    if (sphereMesh) {
+      sphereMesh.rotation.y += (sphereTargetRotationY - sphereMesh.rotation.y) * 0.2;
+    }
+
     renderer.render(scene, camera);
   });
 }

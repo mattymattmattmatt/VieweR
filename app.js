@@ -52,6 +52,7 @@ let currentImageIndex = -1;
 let currentAudio = null;
 let audioEnabled = true;
 let interactionLocked = false;
+let imageLoading = false;
 let sphereTargetRotationY = 0;
 let xrSessionActive = false;
 let xrSupported = false;
@@ -653,18 +654,25 @@ function setupControllers() {
     const controller = renderer.xr.getController(i);
     controller.userData.stickActive = false;
     controller.userData.menuPressed = false;
+    controller.userData.index = i;
 
     // The targetRaySpace returned by getController does not expose the gamepad
-    // directly, so grab the live XRInputSource gamepad from the connect event.
+    // directly, so grab the live XRInputSource gamepad (and handedness) from the
+    // connect event.
     controller.addEventListener('connected', (event) => {
       controller.userData.gamepad = event.data.gamepad;
+      controller.userData.handedness = event.data.handedness;
     });
     controller.addEventListener('disconnected', () => {
       controller.userData.gamepad = null;
     });
 
-    // Trigger is only for pointing/clicking; the menu is opened with B/Y.
+    // While viewing a panorama, the trigger flips to the previous/next image
+    // (left/right hand). Otherwise it points/clicks the gallery and menu.
     controller.addEventListener('selectstart', () => {
+      if (handleViewerTrigger(controller)) {
+        return;
+      }
       clickFromRay(controller);
     });
 
@@ -783,6 +791,43 @@ function pollControllerInput(controller) {
 function rotateSphere(direction, controller) {
   sphereTargetRotationY += direction * ROTATION_STEP;
   pulseController(controller);
+}
+
+// When a panorama is on screen (no menu, no grid), the trigger steps through
+// the loaded images: left hand -> previous, right hand -> next.
+function handleViewerTrigger(controller) {
+  if (!xrSessionActive || !panoGroup.visible || menuGroup.visible || galleryGroup.visible) {
+    return false;
+  }
+
+  const hand = controller.userData.handedness;
+  const isLeft = hand === 'left' || (hand == null && controller.userData.index === 0);
+  const isRight = hand === 'right' || (hand == null && controller.userData.index === 1);
+
+  if (isLeft) {
+    stepImage(-1, controller);
+    return true;
+  }
+  if (isRight) {
+    stepImage(1, controller);
+    return true;
+  }
+  return false;
+}
+
+function stepImage(direction, controller) {
+  if (imageLoading || imageFiles.length < 2) {
+    return;
+  }
+
+  const target = currentImageIndex + direction;
+  if (target < 0 || target >= imageFiles.length) {
+    return; // at the start/end — nothing to do
+  }
+
+  currentImageIndex = target;
+  pulseController(controller);
+  loadStereoImage(imageFiles[target]);
 }
 
 function clickFromRay(controller) {
@@ -993,6 +1038,7 @@ async function loadStereoImage(imageFile) {
   galleryGroup.visible = false;
   hideMenu();
   showSphereMessage('Loading panorama…');
+  imageLoading = true;
 
   // Start every panorama facing forward.
   sphereTargetRotationY = 0;
@@ -1021,8 +1067,10 @@ async function loadStereoImage(imageFile) {
     // user can pick another without leaving VR; the menu's B/Y button still works.
     if (xrSessionActive && imageFiles.length > 1) {
       galleryGroup.visible = true;
-      positionGroupInFrontOfCamera(galleryGroup, 2.6);
+      positionGroupInFrontOfCamera(galleryGroup, 3.0);
     }
+  } finally {
+    imageLoading = false;
   }
 }
 

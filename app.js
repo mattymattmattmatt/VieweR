@@ -7,7 +7,10 @@ const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/a
 // helpful "convert me" message instead of silently dropping the file.
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|avif|gif|bmp|heic|heif|tiff?)$/i;
 const UNSUPPORTED_EXTENSIONS = /\.(heic|heif|tiff?|raw|dng|cr2|nef|arw)$/i;
-const THUMBNAIL_COLUMNS = 6;
+// Wide, vertically-stacked, 3D thumbnails.
+const CARD_WIDTH = 1.5;
+const CARD_HEIGHT = 0.5;
+const CARD_GAP = 0.14;
 const MENU_BUTTON_HEIGHT = 0.22;
 
 // Thumbstick rotation: snap the panorama in 30° increments.
@@ -253,17 +256,16 @@ function createGallery() {
 function populateGallery(files) {
   clearGallery();
 
+  // Stack wide cards vertically, centred on the group origin (the group itself
+  // is placed at eye height in front of the user). Newest sits at the top.
+  const step = CARD_HEIGHT + CARD_GAP;
+  const center = (files.length - 1) / 2;
+
   files.forEach(async (file, index) => {
-    const texture = await createThumbnail(file).catch(() => createPlaceholderTexture());
-    const card = createThumbnailCard(texture, file.name);
+    const eyes = await createThumbnailEyes(file).catch(() => createPlaceholderEyes());
+    const card = createThumbnailCard(eyes, file.name);
 
-    const column = index % THUMBNAIL_COLUMNS;
-    const row = Math.floor(index / THUMBNAIL_COLUMNS);
-    const x = (column - (Math.min(files.length, THUMBNAIL_COLUMNS) - 1) / 2) * 0.78;
-    const y = 1.6 - row * 0.62;
-    const z = -2.6;
-
-    card.position.set(x, y, z);
+    card.position.set(0, (index - center) * step, 0);
     card.userData.onClick = () => {
       currentImageIndex = index;
       loadStereoImage(file);
@@ -284,29 +286,34 @@ function clearGallery() {
   galleryObjects.length = 0;
 }
 
-function createThumbnailCard(texture, fileName) {
+function createThumbnailCard(eyes, fileName) {
   const group = new THREE.Group();
 
+  // Frame sits behind on layer 0 (both eyes) and is the raycast click target —
+  // the eye planes are on layers 1/2 which the raycaster ignores.
   const frame = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.68, 0.48),
-    new THREE.MeshBasicMaterial({ color: 0x101722, transparent: true, opacity: 0.92 }),
+    new THREE.PlaneGeometry(CARD_WIDTH + 0.05, CARD_HEIGHT + 0.05),
+    new THREE.MeshBasicMaterial({ color: 0x0c131c, transparent: true, opacity: 0.96 }),
   );
-  frame.position.z = -0.01;
+  frame.position.z = -0.012;
   group.add(frame);
 
-  const thumbnail = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.62, 0.34),
-    new THREE.MeshBasicMaterial({ map: texture }),
-  );
-  thumbnail.position.y = 0.04;
-  group.add(thumbnail);
+  const planeGeometry = new THREE.PlaneGeometry(CARD_WIDTH, CARD_HEIGHT);
 
-  const labelTexture = createLabelTexture(shortenFileName(fileName), 512, 96, 28);
+  const leftPlane = new THREE.Mesh(planeGeometry, new THREE.MeshBasicMaterial({ map: eyes.left }));
+  leftPlane.layers.set(1);
+  group.add(leftPlane);
+
+  const rightPlane = new THREE.Mesh(planeGeometry, new THREE.MeshBasicMaterial({ map: eyes.right }));
+  rightPlane.layers.set(2);
+  group.add(rightPlane);
+
+  const labelTexture = createLabelTexture(shortenFileName(fileName), 768, 96, 30);
   const label = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.62, 0.12),
+    new THREE.PlaneGeometry(CARD_WIDTH * 0.7, 0.1),
     new THREE.MeshBasicMaterial({ map: labelTexture, transparent: true }),
   );
-  label.position.y = -0.18;
+  label.position.set(0, -CARD_HEIGHT / 2 + 0.02, 0.002);
   group.add(label);
 
   group.userData.defaultScale = new THREE.Vector3(1, 1, 1);
@@ -697,10 +704,10 @@ function pollControllerInput(controller) {
 
   if (!controller.userData.stickActive) {
     if (stickX > STICK_TRIGGER) {
-      rotateSphere(-1, controller);
+      rotateSphere(1, controller);
       controller.userData.stickActive = true;
     } else if (stickX < -STICK_TRIGGER) {
-      rotateSphere(1, controller);
+      rotateSphere(-1, controller);
       controller.userData.stickActive = true;
     }
   } else if (Math.abs(stickX) < STICK_RELEASE) {
@@ -735,8 +742,8 @@ function updateHoverState() {
     return null;
   }
 
-  const object = hits[0].object;
-  object.scale.copy(object.userData.defaultScale ?? new THREE.Vector3(1, 1, 1)).multiplyScalar(1.12);
+  const target = findInteractiveTarget(hits[0].object) ?? hits[0].object;
+  target.scale.copy(target.userData.defaultScale ?? new THREE.Vector3(1, 1, 1)).multiplyScalar(1.12);
   return hits[0];
 }
 
@@ -837,33 +844,74 @@ function fileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
-async function createThumbnail(file) {
+// Build a stereo pair of thumbnail textures (top half -> left eye, bottom half
+// -> right eye) so each card previews in 3D, matching the main viewer.
+async function createThumbnailEyes(file) {
   const url = URL.createObjectURL(file);
-  const image = new Image();
-  image.src = url;
-  await image.decode();
+  let source;
+  let width;
+  let height;
 
+  try {
+    try {
+      const image = new Image();
+      image.src = url;
+      await image.decode();
+      source = image;
+      width = image.naturalWidth;
+      height = image.naturalHeight;
+    } catch (primaryError) {
+      if (typeof createImageBitmap !== 'function') {
+        throw primaryError;
+      }
+      source = await createImageBitmap(file);
+      width = source.width;
+      height = source.height;
+    }
+
+    const eyes = {
+      left: halfTexture(source, width, height, 'top'),
+      right: halfTexture(source, width, height, 'bottom'),
+    };
+    source.close?.();
+    return eyes;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function halfTexture(source, width, height, which) {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
-  canvas.getContext('2d').drawImage(image, 0, 0, canvas.width, canvas.height);
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
 
-  URL.revokeObjectURL(url);
+  const halfHeight = Math.floor(height / 2);
+  const sourceY = which === 'top' ? 0 : halfHeight;
+  ctx.drawImage(source, 0, sourceY, width, halfHeight, 0, 0, canvas.width, canvas.height);
+
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
   return texture;
 }
 
-// Fallback thumbnail for images the browser can't decode (e.g. HEIC).
+// Fallback eye pair for images the browser can't decode (e.g. HEIC).
+function createPlaceholderEyes() {
+  return { left: createPlaceholderTexture(), right: createPlaceholderTexture() };
+}
+
 function createPlaceholderTexture() {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 256;
+  canvas.width = 1024;
+  canvas.height = 512;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#1b2733';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = '600 40px sans-serif';
+  ctx.font = '600 56px sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('No preview', canvas.width / 2, canvas.height / 2);

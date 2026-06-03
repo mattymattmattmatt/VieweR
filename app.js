@@ -7,9 +7,9 @@ const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/a
 // helpful "convert me" message instead of silently dropping the file.
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|avif|gif|bmp|heic|heif|tiff?)$/i;
 const UNSUPPORTED_EXTENSIONS = /\.(heic|heif|tiff?|raw|dng|cr2|nef|arw)$/i;
-// Wide, vertically-stacked, 3D thumbnails (25% larger than before).
-const CARD_WIDTH = 1.875;
-const CARD_HEIGHT = 0.625;
+// Wide, vertically-stacked, 3D thumbnails (25% wider, then 10% larger overall).
+const CARD_WIDTH = 2.58;
+const CARD_HEIGHT = 0.6875;
 const CARD_GAP = 0.1;
 // Show this many cards at once; the rest are reached via the up/down arrows.
 const VISIBLE_CARDS = 4;
@@ -283,7 +283,7 @@ function populateGallery(files) {
   for (let i = files.length - 1; i >= 0; i -= 1) {
     const file = files[i];
     const index = i;
-    const card = createThumbnailCard(createPlaceholderEyes(), file.name);
+    const card = createThumbnailCard(createPlaceholderEyes());
 
     card.userData.onClick = () => {
       currentImageIndex = index;
@@ -350,7 +350,7 @@ function clearGallery() {
   galleryObjects.length = 0;
 }
 
-function createThumbnailCard(eyes, fileName) {
+function createThumbnailCard(eyes) {
   const group = new THREE.Group();
 
   // Frame sits behind on layer 0 (both eyes) and is the raycast click target —
@@ -374,15 +374,6 @@ function createThumbnailCard(eyes, fileName) {
 
   group.userData.leftPlane = leftPlane;
   group.userData.rightPlane = rightPlane;
-
-  const labelTexture = createLabelTexture(shortenFileName(fileName), 768, 96, 30);
-  const label = new THREE.Mesh(
-    new THREE.PlaneGeometry(CARD_WIDTH * 0.7, 0.1),
-    new THREE.MeshBasicMaterial({ map: labelTexture, transparent: true }),
-  );
-  label.position.set(0, -CARD_HEIGHT / 2 + 0.02, 0.002);
-  group.add(label);
-
   group.userData.defaultScale = new THREE.Vector3(1, 1, 1);
   return group;
 }
@@ -424,43 +415,50 @@ function createButtonTexture(text) {
   canvas.height = 192;
   const ctx = canvas.getContext('2d');
 
-  const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-  gradient.addColorStop(0, '#1f8dff');
-  gradient.addColorStop(1, '#0b2f55');
-  ctx.fillStyle = gradient;
-  roundRect(ctx, 0, 0, canvas.width, canvas.height, 28);
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.75)';
-  ctx.lineWidth = 5;
+  const pad = 12;
+  const x = pad;
+  const y = pad;
+  const w = canvas.width - pad * 2;
+  const h = canvas.height - pad * 2;
+  const radius = h / 2; // pill / stadium shape
+
+  // Dark frosted-glass body with a soft top sheen, clipped to the pill.
+  ctx.save();
+  roundRect(ctx, x, y, w, h, radius);
+  ctx.clip();
+
+  const body = ctx.createLinearGradient(0, y, 0, y + h);
+  body.addColorStop(0, 'rgba(40, 51, 68, 0.94)');
+  body.addColorStop(1, 'rgba(14, 19, 28, 0.94)');
+  ctx.fillStyle = body;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  const sheen = ctx.createLinearGradient(0, y, 0, y + h * 0.6);
+  sheen.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
+  sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = sheen;
+  ctx.fillRect(0, 0, canvas.width, y + h * 0.6);
+  ctx.restore();
+
+  // Thin accent outline.
+  ctx.strokeStyle = 'rgba(99, 173, 255, 0.55)';
+  ctx.lineWidth = 3;
+  roundRect(ctx, x, y, w, h, radius);
   ctx.stroke();
 
-  ctx.fillStyle = 'white';
-  ctx.font = 'bold 44px sans-serif';
+  // Crisp, letter-spaced label.
+  ctx.fillStyle = '#eaf3ff';
+  ctx.font = '600 42px system-ui, "Segoe UI", sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2, canvas.width - 48);
+  if ('letterSpacing' in ctx) {
+    ctx.letterSpacing = '3px';
+  }
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2, w - 40);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
-
-function createLabelTexture(text, width, height, fontSize) {
-  const canvas = document.createElement('canvas');
-  canvas.width = width;
-  canvas.height = height;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
-  ctx.fillRect(0, 0, width, height);
-  ctx.fillStyle = 'white';
-  ctx.font = `600 ${fontSize}px sans-serif`;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText(text, width / 2, height / 2, width - 24);
-
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = renderer?.capabilities?.getMaxAnisotropy?.() ?? 1;
   return texture;
 }
 
@@ -948,10 +946,10 @@ async function createThumbnailEyes(file) {
 }
 
 function halfTexture(source, width, height, which) {
-  // Canvas matches the card's 3:1 aspect so the cropped strip fills it.
+  // Canvas matches the card's aspect so the cropped strip fills it.
   const canvas = document.createElement('canvas');
   canvas.width = 1200;
-  canvas.height = 400;
+  canvas.height = 320;
   const ctx = canvas.getContext('2d');
 
   // Keep the centre band of each eye-half, dropping the blurry top/bottom pad.
@@ -1111,16 +1109,6 @@ function positionGroupInFrontOfCamera(group, distance) {
   group.position.copy(tempPosition).add(tempDirection.multiplyScalar(distance));
   group.position.y = Math.max(group.position.y, 1.15);
   group.lookAt(tempPosition.x, group.position.y, tempPosition.z);
-}
-
-function shortenFileName(fileName) {
-  if (fileName.length <= 24) {
-    return fileName;
-  }
-
-  const extensionIndex = fileName.lastIndexOf('.');
-  const extension = extensionIndex > -1 ? fileName.slice(extensionIndex) : '';
-  return `${fileName.slice(0, 17)}…${extension}`;
 }
 
 function roundRect(ctx, x, y, width, height, radius) {

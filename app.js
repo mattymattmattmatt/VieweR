@@ -7,10 +7,15 @@ const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/a
 // helpful "convert me" message instead of silently dropping the file.
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|avif|gif|bmp|heic|heif|tiff?)$/i;
 const UNSUPPORTED_EXTENSIONS = /\.(heic|heif|tiff?|raw|dng|cr2|nef|arw)$/i;
-// Wide, vertically-stacked, 3D thumbnails.
-const CARD_WIDTH = 1.5;
-const CARD_HEIGHT = 0.5;
-const CARD_GAP = 0.14;
+// Wide, vertically-stacked, 3D thumbnails (25% larger than before).
+const CARD_WIDTH = 1.875;
+const CARD_HEIGHT = 0.625;
+const CARD_GAP = 0.1;
+// Show this many cards at once; the rest are reached via the up/down arrows.
+const VISIBLE_CARDS = 4;
+// Fraction of each eye-half kept for the thumbnail, centred — crops the blurry
+// letterbox padding many top/bottom stereo photos add. Tweak if needed.
+const THUMB_CROP = 0.5;
 const MENU_BUTTON_HEIGHT = 0.22;
 
 // Thumbstick rotation: snap the panorama in 30° increments.
@@ -28,6 +33,9 @@ let leftTexture = null;
 let rightTexture = null;
 let panoLayersReady = false;
 let galleryGroup;
+let galleryUpArrow;
+let galleryDownArrow;
+let galleryScroll = 0;
 let menuGroup;
 let loadingText;
 let statusMessage;
@@ -250,22 +258,33 @@ function disposePanoTextures() {
 function createGallery() {
   galleryGroup = new THREE.Group();
   galleryGroup.visible = false;
+
+  // Persistent scroll arrows (kept out of galleryObjects so clearGallery leaves
+  // them alone). Positioned/shown by layoutGallery.
+  galleryUpArrow = createMenuButton('▲', 0, 0, 0.5, 0.18);
+  galleryUpArrow.userData.onClick = () => scrollGallery(-1);
+
+  galleryDownArrow = createMenuButton('▼', 0, 0, 0.5, 0.18);
+  galleryDownArrow.userData.onClick = () => scrollGallery(1);
+
+  galleryGroup.add(galleryUpArrow, galleryDownArrow);
+  interactiveObjects.push(galleryUpArrow, galleryDownArrow);
+
   scene.add(galleryGroup);
 }
 
 function populateGallery(files) {
   clearGallery();
+  galleryScroll = 0;
 
-  // Stack wide cards vertically, centred on the group origin (the group itself
-  // is placed at eye height in front of the user). Newest sits at the top.
-  const step = CARD_HEIGHT + CARD_GAP;
-  const center = (files.length - 1) / 2;
+  // Newest first (top of the list). Cards are created synchronously with a
+  // placeholder so their order is stable, then the real stereo textures are
+  // swapped in as they decode.
+  for (let i = files.length - 1; i >= 0; i -= 1) {
+    const file = files[i];
+    const index = i;
+    const card = createThumbnailCard(createPlaceholderEyes(), file.name);
 
-  files.forEach(async (file, index) => {
-    const eyes = await createThumbnailEyes(file).catch(() => createPlaceholderEyes());
-    const card = createThumbnailCard(eyes, file.name);
-
-    card.position.set(0, (index - center) * step, 0);
     card.userData.onClick = () => {
       currentImageIndex = index;
       loadStereoImage(file);
@@ -274,7 +293,52 @@ function populateGallery(files) {
     galleryGroup.add(card);
     galleryObjects.push(card);
     interactiveObjects.push(card);
+
+    createThumbnailEyes(file)
+      .then((eyes) => swapCardEyes(card, eyes))
+      .catch(() => {});
+  }
+
+  layoutGallery();
+}
+
+// Position the visible window of cards and toggle the scroll arrows.
+function layoutGallery() {
+  const total = galleryObjects.length;
+  const maxScroll = Math.max(0, total - VISIBLE_CARDS);
+  galleryScroll = Math.min(Math.max(galleryScroll, 0), maxScroll);
+
+  const step = CARD_HEIGHT + CARD_GAP;
+  const centerSlot = (VISIBLE_CARDS - 1) / 2;
+
+  galleryObjects.forEach((card, index) => {
+    const slot = index - galleryScroll;
+    const visible = slot >= 0 && slot < VISIBLE_CARDS;
+    card.visible = visible;
+    if (visible) {
+      card.position.set(0, (centerSlot - slot) * step, 0);
+    }
   });
+
+  galleryUpArrow.position.set(0, (centerSlot + 0.9) * step, 0);
+  galleryDownArrow.position.set(0, -(centerSlot + 0.9) * step, 0);
+  galleryUpArrow.visible = galleryScroll > 0;
+  galleryDownArrow.visible = galleryScroll < maxScroll;
+}
+
+function scrollGallery(direction) {
+  galleryScroll += direction;
+  layoutGallery();
+}
+
+function swapCardEyes(card, eyes) {
+  const { leftPlane, rightPlane } = card.userData;
+  leftPlane.material.map?.dispose?.();
+  rightPlane.material.map?.dispose?.();
+  leftPlane.material.map = eyes.left;
+  rightPlane.material.map = eyes.right;
+  leftPlane.material.needsUpdate = true;
+  rightPlane.material.needsUpdate = true;
 }
 
 function clearGallery() {
@@ -307,6 +371,9 @@ function createThumbnailCard(eyes, fileName) {
   const rightPlane = new THREE.Mesh(planeGeometry, new THREE.MeshBasicMaterial({ map: eyes.right }));
   rightPlane.layers.set(2);
   group.add(rightPlane);
+
+  group.userData.leftPlane = leftPlane;
+  group.userData.rightPlane = rightPlane;
 
   const labelTexture = createLabelTexture(shortenFileName(fileName), 768, 96, 30);
   const label = new THREE.Mesh(
@@ -549,7 +616,7 @@ function hideMenu() {
 function showGallery() {
   panoGroup.visible = false;
   galleryGroup.visible = true;
-  positionGroupInFrontOfCamera(galleryGroup, 2.6);
+  positionGroupInFrontOfCamera(galleryGroup, 3.0);
   setPointerVisibility(true);
   hideMenu();
 
@@ -881,14 +948,18 @@ async function createThumbnailEyes(file) {
 }
 
 function halfTexture(source, width, height, which) {
+  // Canvas matches the card's 3:1 aspect so the cropped strip fills it.
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 512;
+  canvas.width = 1200;
+  canvas.height = 400;
   const ctx = canvas.getContext('2d');
 
+  // Keep the centre band of each eye-half, dropping the blurry top/bottom pad.
   const halfHeight = Math.floor(height / 2);
-  const sourceY = which === 'top' ? 0 : halfHeight;
-  ctx.drawImage(source, 0, sourceY, width, halfHeight, 0, 0, canvas.width, canvas.height);
+  const keptHeight = Math.floor(halfHeight * THUMB_CROP);
+  const inset = Math.floor((halfHeight - keptHeight) / 2);
+  const sourceY = (which === 'top' ? 0 : halfHeight) + inset;
+  ctx.drawImage(source, 0, sourceY, width, keptHeight, 0, 0, canvas.width, canvas.height);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

@@ -9,7 +9,6 @@ const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|avif|gif|bmp|heic|heif|tiff?)$/i;
 const UNSUPPORTED_EXTENSIONS = /\.(heic|heif|tiff?|raw|dng|cr2|nef|arw)$/i;
 const THUMBNAIL_COLUMNS = 6;
 const MENU_BUTTON_HEIGHT = 0.22;
-const MENU_BUTTON_SPACING = 0.18;
 
 // Thumbstick rotation: snap the panorama in 30° increments.
 const ROTATION_STEP = Math.PI / 6;
@@ -19,7 +18,12 @@ const STICK_RELEASE = 0.3;
 let scene;
 let camera;
 let renderer;
-let sphereMesh;
+let panoGroup;
+let leftSphere;
+let rightSphere;
+let leftTexture = null;
+let rightTexture = null;
+let panoLayersReady = false;
 let galleryGroup;
 let menuGroup;
 let loadingText;
@@ -70,7 +74,7 @@ function init() {
   createStatusMessage();
   checkWebXRSupport();
   createEnvironment();
-  createStereoSphere();
+  createPanoSpheres();
   createGallery();
   createMenu();
   createLoadingIndicator();
@@ -165,66 +169,79 @@ async function enterVR() {
   enterVRButton.style.display = 'none';
   statusMessage.style.display = 'none';
 
+  // Show the whole accumulated collection as thumbnails, and open the most
+  // recently added image straight away.
   populateGallery(imageFiles);
-
-  if (imageFiles.length === 1) {
-    currentImageIndex = 0;
-    loadStereoImage(imageFiles[0]);
-  } else {
-    showGallery();
-  }
+  currentImageIndex = imageFiles.length - 1;
+  loadStereoImage(imageFiles[currentImageIndex]);
 }
 
-function createStereoSphere() {
-  const geometry = new THREE.SphereGeometry(50, 128, 128);
+// Top/bottom (over-under) stereo is rendered the standard three.js way: two
+// inverted spheres, each on its own layer, with the left eye showing the top
+// half of the image and the right eye the bottom half. The WebXR sub-cameras
+// are told which layer to see in the animation loop. This replaces the old
+// custom shader, which relied on a per-eye viewport hack that doesn't fire
+// reliably under WebXR.
+function createPanoSpheres() {
+  panoGroup = new THREE.Group();
+  panoGroup.visible = false;
+
+  const geometry = new THREE.SphereGeometry(50, 64, 48);
   geometry.scale(-1, 1, 1);
 
-  const material = new THREE.ShaderMaterial({
-    uniforms: {
-      pano: { value: null },
-      eyeIndex: { value: 0 },
-      opacity: { value: 1 },
-    },
-    depthWrite: false,
-    transparent: true,
-    vertexShader: `
-      varying vec2 vUv;
+  leftSphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
+  leftSphere.frustumCulled = false;
+  leftSphere.layers.set(1); // left eye only
 
-      void main() {
-        vUv = uv;
-        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-      }
-    `,
-    fragmentShader: `
-      uniform sampler2D pano;
-      uniform int eyeIndex;
-      uniform float opacity;
-      varying vec2 vUv;
+  rightSphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
+  rightSphere.frustumCulled = false;
+  rightSphere.layers.set(2); // right eye only
 
-      void main() {
-        vec2 uv = vUv;
+  panoGroup.add(leftSphere, rightSphere);
+  scene.add(panoGroup);
+}
 
-        if (eyeIndex == 0) {
-          uv.y = 0.5 + (uv.y * 0.5);
-        } else {
-          uv.y = uv.y * 0.5;
-        }
+function applyPanoTextures(baseTexture) {
+  disposePanoTextures();
 
-        gl_FragColor = vec4(texture2D(pano, uv).rgb, opacity);
-      }
-    `,
-  });
+  // Top half of the file -> left eye. (If depth looks inverted on the headset,
+  // swap the two offset.y values below.)
+  leftTexture = baseTexture;
+  configureEyeTexture(leftTexture, 0.5);
 
-  sphereMesh = new THREE.Mesh(geometry, material);
-  sphereMesh.visible = false;
-  sphereMesh.frustumCulled = false;
-  sphereMesh.renderOrder = -10;
-  sphereMesh.onBeforeRender = (_renderer, _scene, activeCamera) => {
-    const viewportX = activeCamera.viewport?.x ?? 0;
-    sphereMesh.material.uniforms.eyeIndex.value = viewportX === 0 ? 0 : 1;
-  };
+  rightTexture = baseTexture.clone();
+  rightTexture.needsUpdate = true;
+  configureEyeTexture(rightTexture, 0.0);
 
-  scene.add(sphereMesh);
+  leftSphere.material.map = leftTexture;
+  leftSphere.material.color.set(0xffffff);
+  leftSphere.material.needsUpdate = true;
+
+  rightSphere.material.map = rightTexture;
+  rightSphere.material.color.set(0xffffff);
+  rightSphere.material.needsUpdate = true;
+}
+
+function configureEyeTexture(texture, offsetY) {
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.wrapS = THREE.RepeatWrapping; // seamless 360° horizontally
+  texture.wrapT = THREE.ClampToEdgeWrapping;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  texture.repeat.set(1, 0.5);
+  texture.offset.set(0, offsetY);
+  texture.needsUpdate = true;
+}
+
+function disposePanoTextures() {
+  leftSphere.material.map = null;
+  rightSphere.material.map = null;
+  // leftTexture aliases the base texture; rightTexture is its clone.
+  leftTexture?.dispose?.();
+  rightTexture?.dispose?.();
+  leftTexture = null;
+  rightTexture = null;
 }
 
 function createGallery() {
@@ -237,7 +254,7 @@ function populateGallery(files) {
   clearGallery();
 
   files.forEach(async (file, index) => {
-    const texture = await createThumbnail(file);
+    const texture = await createThumbnail(file).catch(() => createPlaceholderTexture());
     const card = createThumbnailCard(texture, file.name);
 
     const column = index % THUMBNAIL_COLUMNS;
@@ -300,19 +317,15 @@ function createMenu() {
   menuGroup = new THREE.Group();
   menuGroup.visible = false;
 
-  const rowOffset = (MENU_BUTTON_HEIGHT + MENU_BUTTON_SPACING) / 2;
-
-  const thumbnailsButton = createMenuButton('THUMBNAILS', -0.46, rowOffset, 0.84, MENU_BUTTON_HEIGHT);
-  const loadAnotherButton = createMenuButton('LOAD ANOTHER', 0.46, rowOffset, 0.84, MENU_BUTTON_HEIGHT);
-  const muteButton = createMenuButton('MUTE', -0.46, -rowOffset, 0.84, MENU_BUTTON_HEIGHT);
-  const cancelButton = createMenuButton('CANCEL', 0.46, -rowOffset, 0.84, MENU_BUTTON_HEIGHT);
+  // Two actions only. The B/Y button closes the menu, so a Cancel button is
+  // redundant; audio mute was dropped as unused.
+  const thumbnailsButton = createMenuButton('THUMBNAILS', -0.46, 0, 0.84, MENU_BUTTON_HEIGHT);
+  const loadAnotherButton = createMenuButton('LOAD ANOTHER', 0.46, 0, 0.84, MENU_BUTTON_HEIGHT);
 
   thumbnailsButton.userData.onClick = showGallery;
   loadAnotherButton.userData.onClick = exitVR;
-  muteButton.userData.onClick = toggleMute;
-  cancelButton.userData.onClick = hideMenu;
 
-  [thumbnailsButton, loadAnotherButton, muteButton, cancelButton].forEach((button) => {
+  [thumbnailsButton, loadAnotherButton].forEach((button) => {
     menuGroup.add(button);
     interactiveObjects.push(button);
   });
@@ -521,21 +534,13 @@ function showMenu() {
 function hideMenu() {
   menuGroup.visible = false;
   // Hide the pointer again only when we drop back to the clean panorama view.
-  if (!galleryGroup.visible && sphereMesh.visible) {
+  if (!galleryGroup.visible && panoGroup.visible) {
     setPointerVisibility(false);
   }
 }
 
-function toggleMute() {
-  audioEnabled = !audioEnabled;
-  if (currentAudio) {
-    currentAudio.muted = !audioEnabled;
-  }
-  hideMenu();
-}
-
 function showGallery() {
-  sphereMesh.visible = false;
+  panoGroup.visible = false;
   galleryGroup.visible = true;
   positionGroupInFrontOfCamera(galleryGroup, 2.6);
   setPointerVisibility(true);
@@ -556,7 +561,8 @@ function exitVR() {
 
 function handleSessionEnd() {
   xrSessionActive = false;
-  sphereMesh.visible = false;
+  panoLayersReady = false;
+  panoGroup.visible = false;
   galleryGroup.visible = false;
   hideMenu();
   setPointerVisibility(true);
@@ -684,7 +690,7 @@ function pollControllerInput(controller) {
   const axes = gamepad.axes;
   const stickX = axes.length >= 4 ? axes[2] : axes[0] ?? 0;
 
-  if (!sphereMesh.visible) {
+  if (!panoGroup.visible) {
     controller.userData.stickActive = false;
     return;
   }
@@ -789,34 +795,46 @@ function pulseController(controller) {
 
 function setupFolderInput() {
   document.getElementById('folderInput').addEventListener('change', (event) => {
-    loadedFiles = Array.from(event.target.files);
+    // Quest's file picker only allows one file at a time, so accumulate picks
+    // across visits instead of replacing. Each new image becomes another
+    // thumbnail you can return to via the in-VR THUMBNAILS button.
+    const existingKeys = new Set(loadedFiles.map(fileKey));
+    Array.from(event.target.files).forEach((file) => {
+      if (!existingKeys.has(fileKey(file))) {
+        loadedFiles.push(file);
+        existingKeys.add(fileKey(file));
+      }
+    });
+
     imageFiles = loadedFiles.filter(
       (file) =>
         file.type.startsWith('image/') ||
         SUPPORTED_IMAGE_TYPES.includes(file.type) ||
         IMAGE_EXTENSIONS.test(file.name),
     );
-    currentImageIndex = -1;
+
+    // Let the change event fire again if the same file is re-picked next time.
+    event.target.value = '';
 
     updateEnterVRButton();
 
     if (!imageFiles.length) {
-      updateStatus('No supported images were found. Select a folder containing top/bottom stereo 360 images.');
+      updateStatus('No supported images were found. Select a top/bottom stereo 360 image (JPG or PNG).');
       return;
     }
 
     if (xrSupportChecked && !xrSupported) {
-      updateStatus('Images loaded, but immersive VR is not available in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
+      updateStatus('Image added, but immersive VR is not available in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
       return;
     }
 
-    if (imageFiles.length === 1) {
-      updateStatus('Ready. Press Enter VR to open the selected panorama.');
-      return;
-    }
-
-    updateStatus('Ready. Press Enter VR, then point at a thumbnail and press trigger.');
+    updateStatus(`Ready — ${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} loaded. Press Enter VR to open the latest; use THUMBNAILS in VR to switch.`);
   });
+}
+
+// Stable identity for a picked File so the same image isn't added twice.
+function fileKey(file) {
+  return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
 async function createThumbnail(file) {
@@ -836,6 +854,24 @@ async function createThumbnail(file) {
   return texture;
 }
 
+// Fallback thumbnail for images the browser can't decode (e.g. HEIC).
+function createPlaceholderTexture() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 512;
+  canvas.height = 256;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#1b2733';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = 'rgba(255,255,255,0.75)';
+  ctx.font = '600 40px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('No preview', canvas.width / 2, canvas.height / 2);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
 async function loadStereoImage(imageFile) {
   galleryGroup.visible = false;
   hideMenu();
@@ -843,24 +879,17 @@ async function loadStereoImage(imageFile) {
 
   // Start every panorama facing forward.
   sphereTargetRotationY = 0;
-  sphereMesh.rotation.y = 0;
+  panoGroup.rotation.y = 0;
 
   try {
     const texture = await buildPanoTexture(imageFile);
 
-    fadeOutSphere(() => {
-      const oldTexture = sphereMesh.material.uniforms.pano.value;
-      sphereMesh.material.uniforms.pano.value = texture;
-      oldTexture?.dispose?.();
-
-      sphereMesh.visible = true;
-      sphereMesh.material.uniforms.opacity.value = 0;
-      playMatchingAudio(imageFile.name);
-      loadingText.visible = false;
-      // Clean, control-free view while looking at the panorama.
-      setPointerVisibility(false);
-      fadeInSphere();
-    });
+    applyPanoTextures(texture);
+    panoGroup.visible = true;
+    loadingText.visible = false;
+    playMatchingAudio(imageFile.name);
+    // Clean, control-free view while looking at the panorama.
+    setPointerVisibility(false);
   } catch (error) {
     console.error('Unable to load panorama:', error);
     const hint = UNSUPPORTED_EXTENSIONS.test(imageFile.name) || /heic|heif/.test(imageFile.type)
@@ -886,7 +915,9 @@ async function loadStereoImage(imageFile) {
 // panoramas without exhausting the headset's memory. Oversized images are
 // capped to the GPU's max texture size.
 async function buildPanoTexture(imageFile) {
-  const maxSize = renderer?.capabilities?.maxTextureSize || 4096;
+  // Cap at 4096 on the longest side: the texture is uploaded once per eye, so
+  // two copies of a huge panorama would otherwise blow the headset's memory.
+  const maxSize = Math.min(renderer?.capabilities?.maxTextureSize || 4096, 4096);
   const url = URL.createObjectURL(imageFile);
 
   try {
@@ -931,37 +962,6 @@ function imageToTexture(source, width, height, maxSize) {
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
   return texture;
-}
-
-function fadeOutSphere(callback) {
-  if (!sphereMesh.visible) {
-    callback();
-    return;
-  }
-
-  animateUniformOpacity(1, 0, callback);
-}
-
-function fadeInSphere() {
-  animateUniformOpacity(0, 1);
-}
-
-function animateUniformOpacity(from, to, callback) {
-  const duration = 180;
-  const start = performance.now();
-
-  function step(now) {
-    const progress = Math.min((now - start) / duration, 1);
-    sphereMesh.material.uniforms.opacity.value = THREE.MathUtils.lerp(from, to, progress);
-
-    if (progress < 1) {
-      requestAnimationFrame(step);
-    } else {
-      callback?.();
-    }
-  }
-
-  requestAnimationFrame(step);
 }
 
 function playMatchingAudio(imageName) {
@@ -1045,9 +1045,20 @@ function animate() {
     });
     hands.forEach(handleHand);
 
+    // Once the WebXR session provides its two eye cameras, let each one see its
+    // matching panorama sphere (left eye -> layer 1, right eye -> layer 2).
+    if (xrSessionActive && !panoLayersReady) {
+      const xrCamera = renderer.xr.getCamera();
+      if (xrCamera.cameras && xrCamera.cameras.length >= 2) {
+        xrCamera.cameras[0].layers.enable(1);
+        xrCamera.cameras[1].layers.enable(2);
+        panoLayersReady = true;
+      }
+    }
+
     // Ease toward the snapped target rotation for a smooth 30° step.
-    if (sphereMesh) {
-      sphereMesh.rotation.y += (sphereTargetRotationY - sphereMesh.rotation.y) * 0.2;
+    if (panoGroup) {
+      panoGroup.rotation.y += (sphereTargetRotationY - panoGroup.rotation.y) * 0.2;
     }
 
     renderer.render(scene, camera);

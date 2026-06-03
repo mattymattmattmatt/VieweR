@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
 
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
+// Pick up images even when the headset reports an empty MIME type (common for
+// files copied onto a Quest). HEIC/HEIF/TIFF are matched too so we can show a
+// helpful "convert me" message instead of silently dropping the file.
+const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|avif|gif|bmp|heic|heif|tiff?)$/i;
+const UNSUPPORTED_EXTENSIONS = /\.(heic|heif|tiff?|raw|dng|cr2|nef|arw)$/i;
 const THUMBNAIL_COLUMNS = 6;
 const MENU_BUTTON_HEIGHT = 0.22;
 const MENU_BUTTON_SPACING = 0.18;
@@ -374,12 +379,68 @@ function createLabelTexture(text, width, height, fontSize) {
 
 function createLoadingIndicator() {
   loadingText = new THREE.Mesh(
-    new THREE.PlaneGeometry(1.2, 0.28),
-    new THREE.MeshBasicMaterial({ map: createLabelTexture('Loading panorama...', 768, 160, 52), transparent: true }),
+    new THREE.PlaneGeometry(1.5, 0.56),
+    new THREE.MeshBasicMaterial({ map: createMessageTexture('Loading panorama…'), transparent: true }),
   );
-  loadingText.position.set(0, 1.55, -2);
+  loadingText.position.set(0, 1.5, -2);
+  loadingText.renderOrder = 20;
   loadingText.visible = false;
   scene.add(loadingText);
+}
+
+// Swap the message plane's texture and show it. Used for loading + errors so
+// the user always gets readable feedback inside the headset.
+function showSphereMessage(text) {
+  const previous = loadingText.material.map;
+  loadingText.material.map = createMessageTexture(text);
+  loadingText.material.needsUpdate = true;
+  previous?.dispose?.();
+  loadingText.visible = true;
+}
+
+function createMessageTexture(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 384;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  roundRect(ctx, 0, 0, canvas.width, canvas.height, 36);
+  ctx.fill();
+
+  ctx.fillStyle = 'white';
+  ctx.font = '600 46px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  const lines = wrapText(ctx, text, canvas.width - 100);
+  const lineHeight = 58;
+  const startY = canvas.height / 2 - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, index) => {
+    ctx.fillText(line, canvas.width / 2, startY + index * lineHeight);
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+function wrapText(ctx, text, maxWidth) {
+  const lines = [];
+  text.split('\n').forEach((paragraph) => {
+    let current = '';
+    paragraph.split(' ').forEach((word) => {
+      const candidate = current ? `${current} ${word}` : word;
+      if (ctx.measureText(candidate).width > maxWidth && current) {
+        lines.push(current);
+        current = word;
+      } else {
+        current = candidate;
+      }
+    });
+    lines.push(current);
+  });
+  return lines;
 }
 
 function createStatusMessage() {
@@ -453,10 +514,16 @@ function showMenu() {
   positionGroupInFrontOfCamera(menuGroup, 1.7);
   menuGroup.visible = true;
   menuGroup.scale.setScalar(1);
+  // Bring the pointer back so the menu buttons can be aimed at.
+  setPointerVisibility(true);
 }
 
 function hideMenu() {
   menuGroup.visible = false;
+  // Hide the pointer again only when we drop back to the clean panorama view.
+  if (!galleryGroup.visible && sphereMesh.visible) {
+    setPointerVisibility(false);
+  }
 }
 
 function toggleMute() {
@@ -723,7 +790,12 @@ function pulseController(controller) {
 function setupFolderInput() {
   document.getElementById('folderInput').addEventListener('change', (event) => {
     loadedFiles = Array.from(event.target.files);
-    imageFiles = loadedFiles.filter((file) => file.type.startsWith('image/') || SUPPORTED_IMAGE_TYPES.includes(file.type));
+    imageFiles = loadedFiles.filter(
+      (file) =>
+        file.type.startsWith('image/') ||
+        SUPPORTED_IMAGE_TYPES.includes(file.type) ||
+        IMAGE_EXTENSIONS.test(file.name),
+    );
     currentImageIndex = -1;
 
     updateEnterVRButton();
@@ -765,27 +837,16 @@ async function createThumbnail(file) {
 }
 
 async function loadStereoImage(imageFile) {
-  loadingText.visible = true;
   galleryGroup.visible = false;
   hideMenu();
+  showSphereMessage('Loading panorama…');
 
   // Start every panorama facing forward.
   sphereTargetRotationY = 0;
   sphereMesh.rotation.y = 0;
 
-  const url = URL.createObjectURL(imageFile);
-
   try {
-    const image = new Image();
-    image.src = url;
-    await image.decode();
-
-    const texture = new THREE.Texture(image);
-    texture.colorSpace = THREE.SRGBColorSpace;
-    texture.minFilter = THREE.LinearFilter;
-    texture.magFilter = THREE.LinearFilter;
-    texture.generateMipmaps = false;
-    texture.needsUpdate = true;
+    const texture = await buildPanoTexture(imageFile);
 
     fadeOutSphere(() => {
       const oldTexture = sphereMesh.material.uniforms.pano.value;
@@ -795,21 +856,81 @@ async function loadStereoImage(imageFile) {
       sphereMesh.visible = true;
       sphereMesh.material.uniforms.opacity.value = 0;
       playMatchingAudio(imageFile.name);
-      setPointerVisibility(true);
       loadingText.visible = false;
-      URL.revokeObjectURL(url);
+      // Clean, control-free view while looking at the panorama.
+      setPointerVisibility(false);
       fadeInSphere();
     });
   } catch (error) {
     console.error('Unable to load panorama:', error);
-    loadingText.visible = false;
-    URL.revokeObjectURL(url);
-    updateStatus(`Could not load ${imageFile.name}. Try a JPEG, PNG, WebP, or AVIF panorama.`);
+    const hint = UNSUPPORTED_EXTENSIONS.test(imageFile.name) || /heic|heif/.test(imageFile.type)
+      ? `Can't open ${imageFile.name}. The Quest browser can't decode HEIC/HEIF/RAW photos — re-save it as JPG or PNG.`
+      : `Couldn't load ${imageFile.name}. Try a JPG, PNG, or WebP panorama (and check it isn't larger than the headset can handle).`;
 
-    if (xrSessionActive) {
-      showGallery();
+    showSphereMessage(hint);
+    updateStatus(hint);
+    setPointerVisibility(true);
+
+    // Leave the thumbnail grid up (when there is more than one image) so the
+    // user can pick another without leaving VR; the menu's B/Y button still works.
+    if (xrSessionActive && imageFiles.length > 1) {
+      galleryGroup.visible = true;
+      positionGroupInFrontOfCamera(galleryGroup, 2.6);
     }
   }
+}
+
+// Decode a file into a panorama texture. Tries an <img> first (matches the
+// original orientation handling), then falls back to createImageBitmap, which
+// can decode some files <img> rejects and lets us downscale very large
+// panoramas without exhausting the headset's memory. Oversized images are
+// capped to the GPU's max texture size.
+async function buildPanoTexture(imageFile) {
+  const maxSize = renderer?.capabilities?.maxTextureSize || 4096;
+  const url = URL.createObjectURL(imageFile);
+
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return imageToTexture(image, image.naturalWidth, image.naturalHeight, maxSize);
+  } catch (primaryError) {
+    if (typeof createImageBitmap === 'function') {
+      const bitmap = await createImageBitmap(imageFile).catch(() => null);
+      if (bitmap) {
+        const texture = imageToTexture(bitmap, bitmap.width, bitmap.height, maxSize);
+        bitmap.close?.();
+        return texture;
+      }
+    }
+    throw primaryError;
+  } finally {
+    // Safe to revoke now: a decoded <img> and any drawn canvas no longer need the URL.
+    URL.revokeObjectURL(url);
+  }
+}
+
+function imageToTexture(source, width, height, maxSize) {
+  let texture;
+  const scale = Math.min(1, maxSize / Math.max(width, height || 1));
+
+  if (scale < 1) {
+    // Downscale oversized panoramas through a canvas so the GPU upload succeeds.
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.getContext('2d').drawImage(source, 0, 0, canvas.width, canvas.height);
+    texture = new THREE.CanvasTexture(canvas);
+  } else {
+    texture = new THREE.Texture(source);
+    texture.needsUpdate = true;
+  }
+
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.minFilter = THREE.LinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = false;
+  return texture;
 }
 
 function fadeOutSphere(callback) {

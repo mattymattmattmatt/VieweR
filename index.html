@@ -167,6 +167,13 @@ button:disabled{
   pointer-events:none;
 }
 
+#actionRow{
+  display:flex;
+  gap:12px;
+  flex-wrap:wrap;
+  justify-content:center;
+}
+
 </style>
 
 </head>
@@ -181,7 +188,7 @@ button:disabled{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.06</div>
+  <div id="rev">rev.07</div>
 
   <input
     type="file"
@@ -189,6 +196,19 @@ button:disabled{
     accept="image/*,audio/*,video/*"
     multiple
   />
+
+  <input
+    type="file"
+    id="folderPicker"
+    webkitdirectory
+    multiple
+    style="display:none"
+  />
+
+  <div id="actionRow">
+    <button id="folderButton" type="button">Load a folder</button>
+    <button id="clearButton" type="button" style="display:none">Clear saved</button>
+  </div>
 
 </div>
 
@@ -202,7 +222,7 @@ button:disabled{
   }
 }
 </script>
-<script type="module" src="app.js?v=06"></script>
+<script type="module" src="app.js?v=07"></script>
 
 </body>
 </html>

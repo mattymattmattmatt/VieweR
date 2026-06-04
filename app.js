@@ -23,6 +23,11 @@ const ROTATION_STEP = Math.PI / 6;
 const STICK_TRIGGER = 0.6;
 const STICK_RELEASE = 0.3;
 
+// Fraction of each eye's vertical field kept in the main view. Many top/bottom
+// stereo photos pad the poles with blur; rendering only the central band on a
+// matching partial sphere drops that blur (1 = full sphere, old behaviour).
+const PANO_CROP = 0.62;
+
 let scene;
 let camera;
 let renderer;
@@ -92,7 +97,8 @@ function init() {
   createLoadingIndicator();
   setupControllers();
   setupHands();
-  setupFolderInput();
+  setupInputs();
+  restoreLibrary();
 
   window.addEventListener('resize', onWindowResize);
   renderer.xr.addEventListener('sessionend', handleSessionEnd);
@@ -198,7 +204,12 @@ function createPanoSpheres() {
   panoGroup = new THREE.Group();
   panoGroup.visible = false;
 
-  const geometry = new THREE.SphereGeometry(50, 64, 48);
+  // Render only the central PANO_CROP band of latitude so the blurry poles of
+  // padded stereo photos fall outside the geometry (you see the dark backdrop
+  // there instead). thetaStart/thetaLength reduce to a full sphere at crop = 1.
+  const thetaStart = Math.PI * (1 - PANO_CROP) / 2;
+  const thetaLength = Math.PI * PANO_CROP;
+  const geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, thetaStart, thetaLength);
   geometry.scale(-1, 1, 1);
 
   leftSphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
@@ -216,14 +227,14 @@ function createPanoSpheres() {
 function applyPanoTextures(baseTexture) {
   disposePanoTextures();
 
-  // Top half of the file -> left eye. (If depth looks inverted on the headset,
-  // swap the two offset.y values below.)
-  leftTexture = baseTexture;
-  configureEyeTexture(leftTexture, 0.5);
+  // Both eyes are clones of the cached base so the base stays reusable for
+  // preloading. Top half of the file -> left eye. (If depth looks inverted on
+  // the headset, swap 'top'/'bottom' below.)
+  leftTexture = baseTexture.clone();
+  configureEyeTexture(leftTexture, 'top');
 
   rightTexture = baseTexture.clone();
-  rightTexture.needsUpdate = true;
-  configureEyeTexture(rightTexture, 0.0);
+  configureEyeTexture(rightTexture, 'bottom');
 
   leftSphere.material.map = leftTexture;
   leftSphere.material.color.set(0xffffff);
@@ -234,14 +245,20 @@ function applyPanoTextures(baseTexture) {
   rightSphere.material.needsUpdate = true;
 }
 
-function configureEyeTexture(texture, offsetY) {
+function configureEyeTexture(texture, eye) {
+  // Select this eye's half of the file, then keep only its central PANO_CROP
+  // band (matching the partial sphere). Derived so crop = 1 == old full mapping.
+  const repeatY = 0.5 * PANO_CROP;
+  const halfBase = eye === 'top' ? 0.5 : 0.0;
+  const offsetY = halfBase + (1 - PANO_CROP) / 4;
+
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping; // seamless 360° horizontally
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
-  texture.repeat.set(1, 0.5);
+  texture.repeat.set(1, repeatY);
   texture.offset.set(0, offsetY);
   texture.needsUpdate = true;
 }
@@ -249,7 +266,7 @@ function configureEyeTexture(texture, offsetY) {
 function disposePanoTextures() {
   leftSphere.material.map = null;
   rightSphere.material.map = null;
-  // leftTexture aliases the base texture; rightTexture is its clone.
+  // These are clones of the cached base; disposing them leaves the base intact.
   leftTexture?.dispose?.();
   rightTexture?.dispose?.();
   leftTexture = null;
@@ -642,6 +659,8 @@ function handleSessionEnd() {
   document.getElementById('ui').style.display = 'flex';
   enterVRButton.style.display = 'block';
   updateEnterVRButton();
+  updateLibraryControls();
+  clearPanoCache(); // free decoded panoramas when leaving VR
 
   if (currentAudio) {
     currentAudio.pause();
@@ -910,43 +929,176 @@ function pulseController(controller) {
   actuator?.pulse?.(0.25, 35);
 }
 
-function setupFolderInput() {
-  document.getElementById('folderInput').addEventListener('change', (event) => {
-    // Quest's file picker only allows one file at a time, so accumulate picks
-    // across visits instead of replacing. Each new image becomes another
-    // thumbnail you can return to via the in-VR THUMBNAILS button.
-    const existingKeys = new Set(loadedFiles.map(fileKey));
-    Array.from(event.target.files).forEach((file) => {
-      if (!existingKeys.has(fileKey(file))) {
-        loadedFiles.push(file);
-        existingKeys.add(fileKey(file));
-      }
-    });
+function setupInputs() {
+  const folderInput = document.getElementById('folderInput');
+  const folderPicker = document.getElementById('folderPicker');
+  const folderButton = document.getElementById('folderButton');
+  const clearButton = document.getElementById('clearButton');
 
-    imageFiles = loadedFiles.filter(
-      (file) =>
-        file.type.startsWith('image/') ||
-        SUPPORTED_IMAGE_TYPES.includes(file.type) ||
-        IMAGE_EXTENSIONS.test(file.name),
-    );
+  folderInput.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
+  folderPicker.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
+  folderButton.addEventListener('click', () => folderPicker.click());
+  clearButton.addEventListener('click', clearLibrary);
+}
 
-    // Let the change event fire again if the same file is re-picked next time.
-    event.target.value = '';
+function isImageFile(file) {
+  return (
+    file.type.startsWith('image/') ||
+    SUPPORTED_IMAGE_TYPES.includes(file.type) ||
+    IMAGE_EXTENSIONS.test(file.name)
+  );
+}
 
-    updateEnterVRButton();
-
-    if (!imageFiles.length) {
-      updateStatus('No supported images were found. Select a top/bottom stereo 360 image (JPG or PNG).');
-      return;
+function handlePickedFiles(fileList, inputEl) {
+  // Quest's picker only allows one file at a time, so accumulate picks (deduped)
+  // across visits instead of replacing. Each new image is also saved to the
+  // persistent library so it returns after a reload.
+  const existingKeys = new Set(loadedFiles.map(fileKey));
+  Array.from(fileList).forEach((file) => {
+    if (isImageFile(file) && !existingKeys.has(fileKey(file))) {
+      loadedFiles.push(file);
+      existingKeys.add(fileKey(file));
+      persistImage(file);
     }
-
-    if (xrSupportChecked && !xrSupported) {
-      updateStatus('Image added, but immersive VR is not available in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
-      return;
-    }
-
-    updateStatus(`Ready — ${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} loaded. Press Enter VR to open the latest; use THUMBNAILS in VR to switch.`);
   });
+
+  imageFiles = loadedFiles.filter(isImageFile);
+
+  if (inputEl) {
+    inputEl.value = ''; // allow re-picking the same file/folder next time
+  }
+
+  updateEnterVRButton();
+  updateLibraryControls();
+
+  if (!imageFiles.length) {
+    updateStatus('No supported images were found. Select a top/bottom stereo 360 image (JPG or PNG).');
+    return;
+  }
+
+  if (xrSupportChecked && !xrSupported) {
+    updateStatus('Image added, but immersive VR is not available in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
+    return;
+  }
+
+  updateStatus(`Ready — ${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} loaded. Press Enter VR to open the latest; use THUMBNAILS in VR to switch.`);
+}
+
+function updateLibraryControls() {
+  const clearButton = document.getElementById('clearButton');
+  if (clearButton) {
+    clearButton.style.display = loadedFiles.length ? 'block' : 'none';
+  }
+}
+
+async function clearLibrary() {
+  loadedFiles = [];
+  imageFiles = [];
+  currentImageIndex = -1;
+  clearPanoCache();
+  await idbClear().catch(() => {});
+  updateEnterVRButton();
+  updateLibraryControls();
+  updateStatus('Saved library cleared. Choose images to begin.');
+}
+
+// ---- Persistent library (IndexedDB) -------------------------------------
+const DB_NAME = 'VieweRDB';
+const DB_STORE = 'images';
+let dbPromise = null;
+
+function openDB() {
+  if (dbPromise) {
+    return dbPromise;
+  }
+  dbPromise = new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) {
+      reject(new Error('IndexedDB unavailable'));
+      return;
+    }
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      if (!db.objectStoreNames.contains(DB_STORE)) {
+        db.createObjectStore(DB_STORE, { keyPath: 'id' });
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return dbPromise;
+}
+
+async function persistImage(file) {
+  try {
+    const db = await openDB();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readwrite');
+      tx.objectStore(DB_STORE).put({
+        id: fileKey(file),
+        name: file.name,
+        type: file.type,
+        lastModified: file.lastModified,
+        savedAt: Date.now(),
+        blob: file,
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch (error) {
+    console.warn('Could not save image to the library:', error);
+  }
+}
+
+async function idbClear() {
+  const db = await openDB();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, 'readwrite');
+    tx.objectStore(DB_STORE).clear();
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function restoreLibrary() {
+  let records;
+  try {
+    const db = await openDB();
+    records = await new Promise((resolve, reject) => {
+      const tx = db.transaction(DB_STORE, 'readonly');
+      const request = tx.objectStore(DB_STORE).getAll();
+      request.onsuccess = () => resolve(request.result || []);
+      request.onerror = () => reject(request.error);
+    });
+  } catch (error) {
+    return; // no persistence available — nothing to restore
+  }
+
+  if (!records.length) {
+    return;
+  }
+
+  records.sort((a, b) => (a.savedAt || 0) - (b.savedAt || 0));
+
+  const existingKeys = new Set(loadedFiles.map(fileKey));
+  records.forEach((record) => {
+    const file = new File([record.blob], record.name, {
+      type: record.type,
+      lastModified: record.lastModified,
+    });
+    if (!existingKeys.has(fileKey(file))) {
+      loadedFiles.push(file);
+      existingKeys.add(fileKey(file));
+    }
+  });
+
+  imageFiles = loadedFiles.filter(isImageFile);
+  updateEnterVRButton();
+  updateLibraryControls();
+
+  if (imageFiles.length) {
+    updateStatus(`Library restored — ${imageFiles.length} saved image${imageFiles.length === 1 ? '' : 's'}. Press Enter VR.`);
+  }
 }
 
 // Stable identity for a picked File so the same image isn't added twice.
@@ -1045,14 +1197,16 @@ async function loadStereoImage(imageFile) {
   panoGroup.rotation.y = 0;
 
   try {
-    const texture = await buildPanoTexture(imageFile);
+    const baseTexture = await getBaseTexture(imageFile);
 
-    applyPanoTextures(texture);
+    applyPanoTextures(baseTexture);
     panoGroup.visible = true;
     loadingText.visible = false;
     playMatchingAudio(imageFile.name);
     // Clean, control-free view while looking at the panorama.
     setPointerVisibility(false);
+    // Decode the neighbours in the background so trigger-stepping is instant.
+    preloadNeighbours();
   } catch (error) {
     console.error('Unable to load panorama:', error);
     const hint = UNSUPPORTED_EXTENSIONS.test(imageFile.name) || /heic|heif/.test(imageFile.type)
@@ -1072,6 +1226,57 @@ async function loadStereoImage(imageFile) {
   } finally {
     imageLoading = false;
   }
+}
+
+// Cache of decoded base textures keyed by fileKey, holding the promise so
+// concurrent requests share one decode. Eye textures are cloned from these, so
+// a cached base can be reused instantly when stepping back to an image.
+const panoCache = new Map();
+
+function getBaseTexture(imageFile) {
+  const key = fileKey(imageFile);
+  if (!panoCache.has(key)) {
+    panoCache.set(
+      key,
+      buildPanoTexture(imageFile).catch((error) => {
+        panoCache.delete(key); // don't cache failures
+        throw error;
+      }),
+    );
+  }
+  return panoCache.get(key);
+}
+
+// Keep only the current image and its immediate neighbours decoded; kick off
+// the neighbours' decode and dispose anything outside that window.
+function preloadNeighbours() {
+  if (imageFiles.length < 2) {
+    return;
+  }
+
+  const keep = new Set();
+  for (let d = -1; d <= 1; d += 1) {
+    const j = currentImageIndex + d;
+    if (j >= 0 && j < imageFiles.length) {
+      const file = imageFiles[j];
+      keep.add(fileKey(file));
+      getBaseTexture(file).catch(() => {});
+    }
+  }
+
+  for (const [key, value] of panoCache) {
+    if (!keep.has(key)) {
+      panoCache.delete(key);
+      Promise.resolve(value).then((texture) => texture?.dispose?.()).catch(() => {});
+    }
+  }
+}
+
+function clearPanoCache() {
+  for (const value of panoCache.values()) {
+    Promise.resolve(value).then((texture) => texture?.dispose?.()).catch(() => {});
+  }
+  panoCache.clear();
 }
 
 // Decode a file into a panorama texture. Tries an <img> first (matches the
@@ -1094,9 +1299,9 @@ async function buildPanoTexture(imageFile) {
     if (typeof createImageBitmap === 'function') {
       const bitmap = await createImageBitmap(imageFile).catch(() => null);
       if (bitmap) {
-        const texture = imageToTexture(bitmap, bitmap.width, bitmap.height, maxSize);
-        bitmap.close?.();
-        return texture;
+        // Don't close the bitmap: the texture (and its eye clones) reference it
+        // until the GPU upload happens on first render.
+        return imageToTexture(bitmap, bitmap.width, bitmap.height, maxSize);
       }
     }
     throw primaryError;

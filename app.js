@@ -28,6 +28,13 @@ const STICK_RELEASE = 0.3;
 // matching partial sphere drops that blur (1 = full sphere, old behaviour).
 const PANO_CROP = 0.62;
 
+// Render sharpness / performance tuning (Quest).
+// - Framebuffer scale > 1 supersamples for crisper detail.
+// - Fixed foveation (0..1) drops periphery detail to claw back GPU headroom.
+const FRAMEBUFFER_SCALE = 1.4;
+const FOVEATION = 0.5;
+let maxAnisotropy = 1;
+
 let scene;
 let camera;
 let renderer;
@@ -86,6 +93,12 @@ function init() {
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.xr.enabled = true;
+
+  // Sharper image + smoother framerate on Quest: supersample the XR
+  // framebuffer, enable fixed foveation, and use the GPU's max anisotropy.
+  maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
+  renderer.xr.setFramebufferScaleFactor(FRAMEBUFFER_SCALE);
+  renderer.xr.setFoveation(FOVEATION);
 
   createEnterVRButton();
   createStatusMessage();
@@ -258,6 +271,7 @@ function configureEyeTexture(texture, eye) {
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
+  texture.anisotropy = maxAnisotropy;
   texture.repeat.set(1, repeatY);
   texture.offset.set(0, offsetY);
   texture.needsUpdate = true;
@@ -1161,6 +1175,7 @@ function halfTexture(source, width, height, which) {
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
   texture.generateMipmaps = false;
+  texture.anisotropy = maxAnisotropy;
   return texture;
 }
 

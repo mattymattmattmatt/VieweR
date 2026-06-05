@@ -174,6 +174,44 @@ button:disabled{
   justify-content:center;
 }
 
+#dropHint{
+  max-width:360px;
+  color:rgba(255,255,255,0.55);
+  font-size:13px;
+  line-height:1.4;
+  text-align:center;
+  user-select:none;
+  pointer-events:none;
+}
+
+/* DRAG-AND-DROP OVERLAY */
+
+#dropOverlay{
+  position:fixed;
+  inset:0;
+  z-index:50;
+  display:none;
+  align-items:center;
+  justify-content:center;
+  background:rgba(5,10,20,0.78);
+  backdrop-filter:blur(4px);
+}
+
+#dropOverlay.active{
+  display:flex;
+}
+
+#dropOverlay .box{
+  padding:48px 64px;
+  border:3px dashed rgba(99,173,255,0.8);
+  border-radius:24px;
+  color:#eaf3ff;
+  font-size:24px;
+  letter-spacing:1px;
+  text-align:center;
+  background:rgba(20,28,40,0.6);
+}
+
 </style>
 
 </head>
@@ -188,7 +226,7 @@ button:disabled{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.09</div>
+  <div id="rev">rev.10</div>
 
   <input
     type="file"
@@ -201,6 +239,15 @@ button:disabled{
     <button id="clearButton" type="button" style="display:none">Clear saved</button>
   </div>
 
+  <div id="dropHint">
+    …or drag images in. Open the <b>Files</b> app side-by-side, select your
+    panoramas, and drag them onto this page.
+  </div>
+
+</div>
+
+<div id="dropOverlay">
+  <div class="box">Drop images to add them</div>
 </div>
 
 <canvas id="xr-canvas"></canvas>
@@ -213,7 +260,7 @@ button:disabled{
   }
 }
 </script>
-<script type="module" src="app.js?v=09"></script>
+<script type="module" src="app.js?v=10"></script>
 
 </body>
 </html>

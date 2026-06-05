@@ -7,8 +7,8 @@ const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/a
 // helpful "convert me" message instead of silently dropping the file.
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|webp|avif|gif|bmp|heic|heif|tiff?)$/i;
 const UNSUPPORTED_EXTENSIONS = /\.(heic|heif|tiff?|raw|dng|cr2|nef|arw)$/i;
-// Wide, vertically-stacked, 3D thumbnails (25% wider, then 10% larger overall).
-const CARD_WIDTH = 2.58;
+// Wide, vertically-stacked, 3D thumbnails.
+const CARD_WIDTH = 2.967;
 const CARD_HEIGHT = 0.6875;
 const CARD_GAP = 0.1;
 // Show this many cards at once; the rest are reached via the up/down arrows.
@@ -945,13 +945,9 @@ function pulseController(controller) {
 
 function setupInputs() {
   const folderInput = document.getElementById('folderInput');
-  const folderPicker = document.getElementById('folderPicker');
-  const folderButton = document.getElementById('folderButton');
   const clearButton = document.getElementById('clearButton');
 
   folderInput.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
-  folderPicker.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
-  folderButton.addEventListener('click', () => folderPicker.click());
   clearButton.addEventListener('click', clearLibrary);
 }
 
@@ -1160,7 +1156,7 @@ function halfTexture(source, width, height, which) {
   // Canvas matches the card's aspect so the cropped strip fills it.
   const canvas = document.createElement('canvas');
   canvas.width = 1200;
-  canvas.height = 320;
+  canvas.height = 278;
   const ctx = canvas.getContext('2d');
 
   // Keep the centre band of each eye-half, dropping the blurry top/bottom pad.

@@ -184,35 +184,6 @@ button:disabled{
   pointer-events:none;
 }
 
-/* LANDING-PAGE LIBRARY STRIP */
-
-#libraryStrip{
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-  justify-content:center;
-  max-width:520px;
-  max-height:180px;
-  overflow-y:auto;
-}
-
-#libraryStrip:empty{
-  display:none;
-}
-
-#libraryStrip img{
-  width:120px;
-  height:64px;
-  object-fit:cover;
-  border-radius:8px;
-  border:1px solid rgba(255,255,255,0.18);
-}
-
-#libraryCount{
-  color:rgba(255,255,255,0.7);
-  font-size:14px;
-}
-
 /* DRAG-AND-DROP OVERLAY */
 
 #dropOverlay{
@@ -255,22 +226,16 @@ button:disabled{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.11</div>
+  <div id="rev">rev.12</div>
 
   <input
     type="file"
     id="folderInput"
     accept="image/*,audio/*,video/*"
     multiple
-    style="display:none"
   />
 
-  <div id="libraryStrip"></div>
-
-  <div id="libraryCount"></div>
-
   <div id="actionRow">
-    <button id="addButton" type="button">➕ Add image</button>
     <button id="clearButton" type="button" style="display:none">Clear saved</button>
   </div>
 
@@ -295,7 +260,7 @@ button:disabled{
   }
 }
 </script>
-<script type="module" src="app.js?v=11"></script>
+<script type="module" src="app.js?v=12"></script>
 
 </body>
 </html>

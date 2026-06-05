@@ -111,6 +111,7 @@ function init() {
   setupControllers();
   setupHands();
   setupInputs();
+  setupDropZone();
   restoreLibrary();
 
   window.addEventListener('resize', onWindowResize);
@@ -949,6 +950,104 @@ function setupInputs() {
 
   folderInput.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
   clearButton.addEventListener('click', clearLibrary);
+}
+
+// Drag-and-drop: Quest's browser supports the HTML5 drop API, so users can open
+// the Files app side-by-side and drag a batch of images onto the page — a way
+// around the single-file picker. Whole folders are accepted too.
+function setupDropZone() {
+  const overlay = document.getElementById('dropOverlay');
+  const showOverlay = (on) => overlay?.classList.toggle('active', on);
+
+  // dragover must preventDefault on every event or the browser blocks the drop.
+  ['dragenter', 'dragover'].forEach((type) => {
+    window.addEventListener(type, (event) => {
+      event.preventDefault();
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect = 'copy';
+      }
+      showOverlay(true);
+    });
+  });
+
+  window.addEventListener('dragleave', (event) => {
+    event.preventDefault();
+    // Only clear when the pointer actually leaves the window.
+    if (!event.relatedTarget) {
+      showOverlay(false);
+    }
+  });
+
+  window.addEventListener('drop', async (event) => {
+    event.preventDefault();
+    showOverlay(false);
+    const files = await filesFromDataTransfer(event.dataTransfer);
+    if (files.length) {
+      handlePickedFiles(files, null);
+    }
+  });
+}
+
+// Collect dropped files, descending into any dropped folders. webkitGetAsEntry
+// must be called synchronously during the drop event, so the entries are
+// captured up front before any async folder traversal.
+async function filesFromDataTransfer(dataTransfer) {
+  if (!dataTransfer) {
+    return [];
+  }
+
+  const fallbackFiles = dataTransfer.files ? Array.from(dataTransfer.files) : [];
+
+  const entries = [];
+  if (dataTransfer.items && dataTransfer.items.length && dataTransfer.items[0].webkitGetAsEntry) {
+    for (const item of dataTransfer.items) {
+      const entry = item.webkitGetAsEntry?.();
+      if (entry) {
+        entries.push(entry);
+      }
+    }
+  }
+
+  if (!entries.length) {
+    return fallbackFiles;
+  }
+
+  const collected = [];
+  for (const entry of entries) {
+    await collectEntry(entry, collected);
+  }
+  return collected.length ? collected : fallbackFiles;
+}
+
+function collectEntry(entry, out) {
+  return new Promise((resolve) => {
+    if (entry.isFile) {
+      entry.file(
+        (file) => {
+          out.push(file);
+          resolve();
+        },
+        () => resolve(),
+      );
+    } else if (entry.isDirectory) {
+      const reader = entry.createReader();
+      const readBatch = () => {
+        reader.readEntries(async (batch) => {
+          if (!batch.length) {
+            resolve();
+            return;
+          }
+          for (const child of batch) {
+            await collectEntry(child, out);
+          }
+          readBatch(); // readEntries returns at most ~100 at a time
+        }, () => resolve());
+      };
+      readBatch();
+    } else {
+      resolve();
+    }
+  });
 }
 
 function isImageFile(file) {

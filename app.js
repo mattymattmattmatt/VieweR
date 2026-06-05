@@ -1090,7 +1090,8 @@ function handlePickedFiles(fileList, inputEl) {
     return;
   }
 
-  updateStatus(`Ready — ${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} loaded. Press Enter VR to open the latest; use THUMBNAILS in VR to switch.`);
+  // The Enter VR button already shows the count, so no extra "ready" text.
+  updateStatus('');
 }
 
 function updateLibraryControls() {
@@ -1204,10 +1205,6 @@ async function restoreLibrary() {
   imageFiles = loadedFiles.filter(isImageFile);
   updateEnterVRButton();
   updateLibraryControls();
-
-  if (imageFiles.length) {
-    updateStatus(`Library restored — ${imageFiles.length} saved image${imageFiles.length === 1 ? '' : 's'}. Press Enter VR.`);
-  }
 }
 
 // Stable identity for a picked File so the same image isn't added twice.

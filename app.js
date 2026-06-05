@@ -946,13 +946,8 @@ function pulseController(controller) {
 
 function setupInputs() {
   const folderInput = document.getElementById('folderInput');
-  const addButton = document.getElementById('addButton');
   const clearButton = document.getElementById('clearButton');
 
-  // Each tap of "Add image" is a fresh user gesture, so the picker always opens
-  // — letting the user rapidly add images one at a time without auto-reopening
-  // (which browsers can block). The live strip below shows the growing library.
-  addButton.addEventListener('click', () => folderInput.click());
   folderInput.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
   clearButton.addEventListener('click', clearLibrary);
 }
@@ -1098,42 +1093,10 @@ function handlePickedFiles(fileList, inputEl) {
   updateStatus(`Ready — ${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} loaded. Press Enter VR to open the latest; use THUMBNAILS in VR to switch.`);
 }
 
-// Object URLs currently shown in the landing-page strip, revoked on rebuild.
-const libraryStripUrls = [];
-
 function updateLibraryControls() {
   const clearButton = document.getElementById('clearButton');
   if (clearButton) {
     clearButton.style.display = loadedFiles.length ? 'block' : 'none';
-  }
-  renderLibraryStrip();
-}
-
-function renderLibraryStrip() {
-  const strip = document.getElementById('libraryStrip');
-  const count = document.getElementById('libraryCount');
-  if (!strip) {
-    return;
-  }
-
-  // Revoke previous preview URLs and rebuild from the current library.
-  libraryStripUrls.forEach((url) => URL.revokeObjectURL(url));
-  libraryStripUrls.length = 0;
-  strip.replaceChildren();
-
-  imageFiles.forEach((file) => {
-    const url = URL.createObjectURL(file);
-    libraryStripUrls.push(url);
-    const img = document.createElement('img');
-    img.src = url;
-    img.alt = file.name;
-    strip.appendChild(img);
-  });
-
-  if (count) {
-    count.textContent = imageFiles.length
-      ? `${imageFiles.length} image${imageFiles.length === 1 ? '' : 's'} ready`
-      : '';
   }
 }
 

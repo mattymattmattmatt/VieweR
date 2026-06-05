@@ -38,6 +38,9 @@ let maxAnisotropy = 1;
 let scene;
 let camera;
 let renderer;
+let environmentMesh;
+let passthroughEnabled = false;
+let arSupported = false;
 let panoGroup;
 let leftSphere;
 let rightSphere;
@@ -88,6 +91,7 @@ function init() {
   renderer = new THREE.WebGLRenderer({
     canvas: document.getElementById('xr-canvas'),
     antialias: true,
+    alpha: true, // allow a transparent clear for AR passthrough
   });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
@@ -112,6 +116,7 @@ function init() {
   setupHands();
   setupInputs();
   setupDropZone();
+  setupPassthroughToggle();
   restoreLibrary();
 
   window.addEventListener('resize', onWindowResize);
@@ -123,10 +128,67 @@ function createEnvironment() {
   geometry.scale(-1, 1, 1);
 
   const material = new THREE.MeshBasicMaterial({ color: 0x05070f });
-  scene.add(new THREE.Mesh(geometry, material));
+  environmentMesh = new THREE.Mesh(geometry, material);
+  scene.add(environmentMesh);
 
   const light = new THREE.HemisphereLight(0xffffff, 0x334466, 1.1);
   scene.add(light);
+}
+
+// In AR mode, clear to transparent and hide the dark backdrop so Quest
+// passthrough shows behind the menu/gallery; restore the dark sky otherwise.
+function applyPassthrough(isAR) {
+  if (isAR) {
+    scene.background = null;
+    renderer.setClearAlpha(0);
+    if (environmentMesh) {
+      environmentMesh.visible = false;
+    }
+  } else {
+    scene.background = new THREE.Color(0x03050a);
+    renderer.setClearAlpha(1);
+    if (environmentMesh) {
+      environmentMesh.visible = true;
+    }
+  }
+}
+
+function setupPassthroughToggle() {
+  try {
+    passthroughEnabled = localStorage.getItem('viewer-passthrough') === '1';
+  } catch (error) {
+    passthroughEnabled = false;
+  }
+
+  const button = document.getElementById('passthroughToggle');
+  if (button) {
+    button.addEventListener('click', () => {
+      passthroughEnabled = !passthroughEnabled;
+      try {
+        localStorage.setItem('viewer-passthrough', passthroughEnabled ? '1' : '0');
+      } catch (error) {
+        /* ignore storage failures */
+      }
+      updatePassthroughToggle();
+    });
+  }
+  updatePassthroughToggle();
+}
+
+function updatePassthroughToggle() {
+  const button = document.getElementById('passthroughToggle');
+  if (!button) {
+    return;
+  }
+
+  if (xrSupportChecked && !arSupported) {
+    button.textContent = 'Passthrough: N/A';
+    button.disabled = true;
+    return;
+  }
+
+  button.disabled = false;
+  button.textContent = `Passthrough: ${passthroughEnabled ? 'On' : 'Off'}`;
 }
 
 function createEnterVRButton() {
@@ -159,8 +221,15 @@ async function checkWebXRSupport() {
     xrSupported = false;
   }
 
+  try {
+    arSupported = await navigator.xr.isSessionSupported('immersive-ar');
+  } catch (error) {
+    arSupported = false;
+  }
+
   xrSupportChecked = true;
   updateEnterVRButton();
+  updatePassthroughToggle();
 
   if (!xrSupported) {
     updateStatus('Immersive VR is not supported in this browser. On Quest 3, use Meta Quest Browser over HTTPS.');
@@ -182,20 +251,27 @@ async function enterVR() {
     return;
   }
 
+  // Use an AR (passthrough) session when the toggle is on and supported; the
+  // panorama sphere covers passthrough while viewing, so the room only shows
+  // behind the gallery/menu.
+  const useAR = passthroughEnabled && arSupported;
+  const sessionMode = useAR ? 'immersive-ar' : 'immersive-vr';
+
   let session;
   try {
     // Keep requestSession as the first awaited WebXR call in the click handler so
     // Quest Browser still treats it as a user-initiated action.
-    session = await navigator.xr.requestSession('immersive-vr', {
+    session = await navigator.xr.requestSession(sessionMode, {
       optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
     });
   } catch (error) {
-    console.error('Unable to start immersive-vr session:', error);
+    console.error(`Unable to start ${sessionMode} session:`, error);
     updateStatus(`Could not enter VR: ${error.message || 'the browser rejected the WebXR session request.'}`);
     return;
   }
 
   await renderer.xr.setSession(session);
+  applyPassthrough(useAR);
   xrSessionActive = true;
   document.getElementById('ui').style.display = 'none';
   enterVRButton.style.display = 'none';
@@ -667,6 +743,7 @@ function exitVR() {
 function handleSessionEnd() {
   xrSessionActive = false;
   panoLayersReady = false;
+  applyPassthrough(false); // restore the dark backdrop for the 2D page
   panoGroup.visible = false;
   galleryGroup.visible = false;
   hideMenu();

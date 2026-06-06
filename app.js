@@ -26,7 +26,11 @@ const STICK_RELEASE = 0.3;
 // Fraction of each eye's vertical field kept in the main view. Many top/bottom
 // stereo photos pad the poles with blur; rendering only the central band on a
 // matching partial sphere drops that blur (1 = full sphere, old behaviour).
-const PANO_CROP = 0.62;
+// "Auto" uses the default; turning Auto off exposes a manual slider.
+const DEFAULT_PANO_CROP = 0.62;
+let panoCrop = DEFAULT_PANO_CROP;
+let cropAuto = true;
+let manualCrop = DEFAULT_PANO_CROP;
 
 // Render sharpness / performance tuning (Quest).
 // - Framebuffer scale > 1 supersamples for crisper detail.
@@ -229,7 +233,65 @@ function setupSettings() {
     });
   }
 
+  setupCropControls();
   applyBrightness();
+}
+
+// Pole-crop control: an Auto toggle (uses the default) and, when Auto is off, a
+// manual slider. Applied live to the current panorama.
+function setupCropControls() {
+  const autoButton = document.getElementById('cropAuto');
+  const sliderRow = document.getElementById('cropSliderRow');
+  const slider = document.getElementById('cropSlider');
+
+  try {
+    cropAuto = localStorage.getItem('viewer-crop-auto') !== '0';
+    const savedManual = parseFloat(localStorage.getItem('viewer-crop-manual'));
+    if (!Number.isNaN(savedManual)) {
+      manualCrop = savedManual;
+    }
+  } catch (error) {
+    /* ignore storage failures */
+  }
+
+  if (slider) {
+    slider.value = String(manualCrop);
+    slider.addEventListener('input', () => {
+      manualCrop = parseFloat(slider.value) || DEFAULT_PANO_CROP;
+      if (!cropAuto) {
+        setPanoCrop(manualCrop);
+      }
+      persist('viewer-crop-manual', String(manualCrop));
+    });
+  }
+
+  if (autoButton) {
+    autoButton.addEventListener('click', () => {
+      cropAuto = !cropAuto;
+      persist('viewer-crop-auto', cropAuto ? '1' : '0');
+      refreshCropControls();
+    });
+  }
+
+  refreshCropControls();
+
+  function refreshCropControls() {
+    if (autoButton) {
+      autoButton.textContent = cropAuto ? 'Auto' : 'Manual';
+    }
+    if (sliderRow) {
+      sliderRow.style.display = cropAuto ? 'none' : 'flex';
+    }
+    setPanoCrop(cropAuto ? DEFAULT_PANO_CROP : manualCrop);
+  }
+}
+
+function persist(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (error) {
+    /* ignore storage failures */
+  }
 }
 
 // Brightness multiplies the panorama materials' colour (pano only — the menu
@@ -347,24 +409,48 @@ function createPanoSpheres() {
   panoGroup = new THREE.Group();
   panoGroup.visible = false;
 
-  // Render only the central PANO_CROP band of latitude so the blurry poles of
-  // padded stereo photos fall outside the geometry (you see the dark backdrop
-  // there instead). thetaStart/thetaLength reduce to a full sphere at crop = 1.
-  const thetaStart = Math.PI * (1 - PANO_CROP) / 2;
-  const thetaLength = Math.PI * PANO_CROP;
-  const geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, thetaStart, thetaLength);
-  geometry.scale(-1, 1, 1);
-
-  leftSphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
+  leftSphere = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0x000000 }));
   leftSphere.frustumCulled = false;
   leftSphere.layers.set(1); // left eye only
 
-  rightSphere = new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0x000000 }));
+  rightSphere = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ color: 0x000000 }));
   rightSphere.frustumCulled = false;
   rightSphere.layers.set(2); // right eye only
 
+  buildPanoGeometry();
+
   panoGroup.add(leftSphere, rightSphere);
   scene.add(panoGroup);
+}
+
+// Render only the central panoCrop band of latitude so the blurry poles of
+// padded stereo photos fall outside the geometry (you see the dark backdrop
+// there instead). thetaStart/thetaLength reduce to a full sphere at crop = 1.
+function buildPanoGeometry() {
+  const thetaStart = Math.PI * (1 - panoCrop) / 2;
+  const thetaLength = Math.PI * panoCrop;
+  const geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, thetaStart, thetaLength);
+  geometry.scale(-1, 1, 1);
+
+  const previous = leftSphere.geometry;
+  leftSphere.geometry = geometry;
+  rightSphere.geometry = geometry; // both eyes share one geometry
+  if (previous && previous !== geometry) {
+    previous.dispose();
+  }
+}
+
+// Apply a new pole-crop value live: rebuild the sphere band and re-map the
+// current eye textures (no reload needed).
+function setPanoCrop(value) {
+  panoCrop = value;
+  buildPanoGeometry();
+  if (leftTexture) {
+    configureEyeTexture(leftTexture, 'top');
+  }
+  if (rightTexture) {
+    configureEyeTexture(rightTexture, 'bottom');
+  }
 }
 
 function applyPanoTextures(baseTexture) {
@@ -389,11 +475,11 @@ function applyPanoTextures(baseTexture) {
 }
 
 function configureEyeTexture(texture, eye) {
-  // Select this eye's half of the file, then keep only its central PANO_CROP
+  // Select this eye's half of the file, then keep only its central panoCrop
   // band (matching the partial sphere). Derived so crop = 1 == old full mapping.
-  const repeatY = 0.5 * PANO_CROP;
+  const repeatY = 0.5 * panoCrop;
   const halfBase = eye === 'top' ? 0.5 : 0.0;
-  const offsetY = halfBase + (1 - PANO_CROP) / 4;
+  const offsetY = halfBase + (1 - panoCrop) / 4;
 
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping; // seamless 360° horizontally
@@ -1077,8 +1163,10 @@ function pulseController(controller) {
 
 function setupInputs() {
   const folderInput = document.getElementById('folderInput');
+  const addButton = document.getElementById('addButton');
   const clearButton = document.getElementById('clearButton');
 
+  addButton.addEventListener('click', () => folderInput.click());
   folderInput.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
   clearButton.addEventListener('click', clearLibrary);
 }

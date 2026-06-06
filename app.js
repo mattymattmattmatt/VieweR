@@ -549,11 +549,13 @@ function applyPanoTextures(baseTexture) {
   rightSphere.material.needsUpdate = true;
 }
 
-// Estimate how much of each eye is real content vs. the blurry letterbox pad
-// that Cardboard-Camera-style conversions add. The padding is a near-flat
-// vertical smear (very low row-to-row detail), so we scan inward from the top
-// and bottom of one eye to where sharp detail begins, and return the centred
-// kept fraction. Returns null if analysis is inconclusive.
+// Estimate the blurry letterbox padding each eye has top and bottom. These
+// conversions keep the real panorama as a SHARP band with a fake BLURRY fill
+// above/below and a hard line between them. The blur has almost no fine
+// horizontal detail (it's blurred), while real content — even smooth sky — sits
+// inside that band. So we: (1) find the textured "core" via horizontal detail,
+// (2) above the core, the blur→content edge is the strongest brightness step,
+// (3) crop to that line. This keeps real sky/ground and removes only the fill.
 function detectContentCrop(image) {
   try {
     const sourceWidth = image.naturalWidth || image.width;
@@ -562,7 +564,7 @@ function detectContentCrop(image) {
       return null;
     }
 
-    const w = 16;
+    const w = 32;
     const h = 256;
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -572,76 +574,98 @@ function detectContentCrop(image) {
     ctx.drawImage(image, 0, 0, sourceWidth, Math.floor(sourceHeight / 2), 0, 0, w, h);
     const data = ctx.getImageData(0, 0, w, h).data;
 
-    const rowLum = (y) => {
-      let sum = 0;
-      for (let x = 0; x < w; x += 1) {
-        const i = (y * w + x) * 4;
-        sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-      }
-      return sum / w;
+    const lumAt = (x, y) => {
+      const i = (y * w + x) * 4;
+      return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
     };
 
-    const detail = new Float32Array(h);
-    let previous = rowLum(0);
-    let maxDetail = 0;
-    for (let y = 1; y < h; y += 1) {
-      const current = rowLum(y);
-      detail[y] = Math.abs(current - previous);
-      previous = current;
-      if (detail[y] > maxDetail) {
-        maxDetail = detail[y];
+    const rowLum = new Float32Array(h); // average brightness of the row
+    const hTexture = new Float32Array(h); // horizontal detail (sharpness) of the row
+    for (let y = 0; y < h; y += 1) {
+      let sum = lumAt(0, y);
+      let edges = 0;
+      let prev = sum;
+      for (let x = 1; x < w; x += 1) {
+        const l = lumAt(x, y);
+        sum += l;
+        edges += Math.abs(l - prev);
+        prev = l;
+      }
+      rowLum[y] = sum / w;
+      hTexture[y] = edges / (w - 1);
+    }
+
+    // Core content = rows with real horizontal detail (the blur has almost none).
+    let maxTexture = 0;
+    for (let y = 0; y < h; y += 1) {
+      if (hTexture[y] > maxTexture) {
+        maxTexture = hTexture[y];
       }
     }
-
-    if (maxDetail < 0.6) {
-      return null; // essentially flat — don't guess
+    if (maxTexture < 2) {
+      return null; // whole eye is soft — can't tell, leave it
     }
+    const textureThreshold = maxTexture * 0.3;
 
-    // Threshold from the MEDIAN row detail, not the max. A single sharp edge no
-    // longer inflates it, so smooth-but-real regions (sky, walls) stay above the
-    // line and aren't mistaken for the near-flat blurry smear (which sits well
-    // below). The absolute floor keeps catching the smear when the median is low.
-    const sorted = Array.from(detail.subarray(1)).sort((a, b) => a - b);
-    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
-    const threshold = Math.max(0.7, median * 0.45);
-    const need = 2;
-    const firstContent = scanForContent(detail, threshold, need, 1, h, 1);
-    const lastContent = scanForContent(detail, threshold, need, h - 1, 0, -1);
-    if (firstContent < 0 || lastContent < 0) {
+    let coreTop = -1;
+    let coreBottom = -1;
+    for (let y = 0; y < h; y += 1) {
+      if (hTexture[y] > textureThreshold) {
+        coreTop = y;
+        break;
+      }
+    }
+    for (let y = h - 1; y >= 0; y -= 1) {
+      if (hTexture[y] > textureThreshold) {
+        coreBottom = y;
+        break;
+      }
+    }
+    if (coreTop < 0 || coreBottom <= coreTop) {
       return null;
     }
 
-    // Trim each end independently, but conservatively: cap each side and the
-    // total, and bail if it wants to remove a lot (that means it's misreading
-    // smooth content as padding — better to under-crop than eat the image).
-    const SIDE_CAP = 0.3;
-    const TOTAL_CAP = 0.45;
-    let top = Math.min(SIDE_CAP, Math.max(0, firstContent / h));
-    let bottom = Math.min(SIDE_CAP, Math.max(0, (h - 1 - lastContent) / h));
-    if (top + bottom > TOTAL_CAP) {
-      const scale = TOTAL_CAP / (top + bottom);
+    // The blur→content line is the strongest brightness step between the edge
+    // and the core. Require it to clearly stand out, else don't crop that side.
+    const vGrad = (y) => Math.abs(rowLum[y] - rowLum[y - 1]);
+    const boundary = (lo, hi) => {
+      let best = -1;
+      let bestVal = 0;
+      for (let y = Math.max(1, lo); y < hi; y += 1) {
+        const g = vGrad(y);
+        if (g > bestVal) {
+          bestVal = g;
+          best = y;
+        }
+      }
+      return { index: best, value: bestVal };
+    };
+
+    let top = 0;
+    let bottom = 0;
+    const topEdge = boundary(2, coreTop);
+    if (topEdge.index > 1 && topEdge.value > 6) {
+      top = (topEdge.index + 1) / h;
+    }
+    const bottomEdge = boundary(coreBottom + 1, h - 1);
+    if (bottomEdge.index > 1 && bottomEdge.value > 6) {
+      bottom = (h - bottomEdge.index) / h;
+    }
+
+    top = Math.min(0.45, Math.max(0, top));
+    bottom = Math.min(0.45, Math.max(0, bottom));
+    if (top + bottom > 0.6) {
+      const scale = 0.6 / (top + bottom);
       top *= scale;
       bottom *= scale;
+    }
+    if (top === 0 && bottom === 0) {
+      return null;
     }
     return { top, bottom };
   } catch (error) {
     return null; // tainted canvas or read failure — fall back to default
   }
-}
-
-function scanForContent(detail, threshold, need, start, end, step) {
-  let run = 0;
-  for (let y = start; y !== end; y += step) {
-    if (detail[y] > threshold) {
-      run += 1;
-      if (run >= need) {
-        return y - step * (need - 1);
-      }
-    } else {
-      run = 0;
-    }
-  }
-  return -1;
 }
 
 function configureEyeTexture(texture, eye) {

@@ -33,9 +33,10 @@ let cropAuto = true;
 let manualCrop = DEFAULT_PANO_CROP;
 
 // Render sharpness / performance tuning (Quest).
-// - Framebuffer scale > 1 supersamples for crisper detail.
+// - Super resolution > 1 supersamples the XR framebuffer for crisper detail
+//   (applies on entering VR). Adjustable in Settings.
 // - Fixed foveation (0..1) drops periphery detail to claw back GPU headroom.
-const FRAMEBUFFER_SCALE = 1.4;
+let superSample = 1.4;
 const FOVEATION = 0.5;
 let maxAnisotropy = 1;
 
@@ -106,7 +107,7 @@ function init() {
   // Sharper image + smoother framerate on Quest: supersample the XR
   // framebuffer, enable fixed foveation, and use the GPU's max anisotropy.
   maxAnisotropy = renderer.capabilities.getMaxAnisotropy();
-  renderer.xr.setFramebufferScaleFactor(FRAMEBUFFER_SCALE);
+  renderer.xr.setFramebufferScaleFactor(superSample);
   renderer.xr.setFoveation(FOVEATION);
 
   createEnterVRButton();
@@ -234,11 +235,12 @@ function setupSettings() {
   }
 
   setupCropControls();
+  setupSuperResControl();
   applyBrightness();
 }
 
-// Pole-crop control: an Auto toggle (uses the default) and, when Auto is off, a
-// manual slider. Applied live to the current panorama.
+// Pole-crop control: Auto (per-image detection) or Manual with a "Crop amount"
+// slider, where higher = more removed (so panoCrop = 1 - amount).
 function setupCropControls() {
   const autoButton = document.getElementById('cropAuto');
   const sliderRow = document.getElementById('cropSliderRow');
@@ -255,9 +257,10 @@ function setupCropControls() {
   }
 
   if (slider) {
-    slider.value = String(manualCrop);
+    slider.value = String(1 - manualCrop); // slider shows crop amount
     slider.addEventListener('input', () => {
-      manualCrop = parseFloat(slider.value) || DEFAULT_PANO_CROP;
+      const amount = parseFloat(slider.value) || 0;
+      manualCrop = Math.min(1, Math.max(0.3, 1 - amount));
       if (!cropAuto) {
         setPanoCrop(manualCrop);
       }
@@ -282,8 +285,41 @@ function setupCropControls() {
     if (sliderRow) {
       sliderRow.style.display = cropAuto ? 'none' : 'flex';
     }
-    setPanoCrop(cropAuto ? DEFAULT_PANO_CROP : manualCrop);
+
+    if (cropAuto) {
+      // Re-run detection on the current image (cheap — base texture is cached).
+      if (panoGroup?.visible && currentImageIndex >= 0 && !imageLoading) {
+        loadStereoImage(imageFiles[currentImageIndex]);
+      }
+    } else {
+      setPanoCrop(manualCrop);
+    }
   }
+}
+
+// Super resolution: framebuffer supersampling. Takes effect on entering VR.
+function setupSuperResControl() {
+  const slider = document.getElementById('superRes');
+  if (!slider) {
+    return;
+  }
+
+  try {
+    const saved = parseFloat(localStorage.getItem('viewer-superres'));
+    if (!Number.isNaN(saved)) {
+      superSample = saved;
+    }
+  } catch (error) {
+    /* ignore storage failures */
+  }
+
+  slider.value = String(superSample);
+  renderer.xr.setFramebufferScaleFactor(superSample);
+  slider.addEventListener('input', () => {
+    superSample = parseFloat(slider.value) || 1.4;
+    renderer.xr.setFramebufferScaleFactor(superSample);
+    persist('viewer-superres', String(superSample));
+  });
 }
 
 function persist(key, value) {
@@ -369,6 +405,9 @@ async function enterVR() {
   // behind the gallery/menu.
   const useAR = passthroughEnabled && arSupported;
   const sessionMode = useAR ? 'immersive-ar' : 'immersive-vr';
+
+  // Super resolution only applies to a freshly created session.
+  renderer.xr.setFramebufferScaleFactor(superSample);
 
   let session;
   try {
@@ -456,6 +495,13 @@ function setPanoCrop(value) {
 function applyPanoTextures(baseTexture) {
   disposePanoTextures();
 
+  // In Auto mode, detect this image's blurry padding and crop to the sharp
+  // content; otherwise keep the manual value. Then rebuild the sphere band.
+  if (cropAuto) {
+    panoCrop = detectContentCrop(baseTexture.image) ?? DEFAULT_PANO_CROP;
+  }
+  buildPanoGeometry();
+
   // Both eyes are clones of the cached base so the base stays reusable for
   // preloading. Top half of the file -> left eye. (If depth looks inverted on
   // the headset, swap 'top'/'bottom' below.)
@@ -472,6 +518,86 @@ function applyPanoTextures(baseTexture) {
   rightSphere.material.map = rightTexture;
   rightSphere.material.color.setScalar(panoBrightness);
   rightSphere.material.needsUpdate = true;
+}
+
+// Estimate how much of each eye is real content vs. the blurry letterbox pad
+// that Cardboard-Camera-style conversions add. The padding is a near-flat
+// vertical smear (very low row-to-row detail), so we scan inward from the top
+// and bottom of one eye to where sharp detail begins, and return the centred
+// kept fraction. Returns null if analysis is inconclusive.
+function detectContentCrop(image) {
+  try {
+    const sourceWidth = image.naturalWidth || image.width;
+    const sourceHeight = image.naturalHeight || image.height;
+    if (!sourceWidth || !sourceHeight) {
+      return null;
+    }
+
+    const w = 16;
+    const h = 256;
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    // Analyse the top eye (top half of the file) as a representative equirect.
+    ctx.drawImage(image, 0, 0, sourceWidth, Math.floor(sourceHeight / 2), 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+
+    const rowLum = (y) => {
+      let sum = 0;
+      for (let x = 0; x < w; x += 1) {
+        const i = (y * w + x) * 4;
+        sum += 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      }
+      return sum / w;
+    };
+
+    const detail = new Float32Array(h);
+    let previous = rowLum(0);
+    let maxDetail = 0;
+    for (let y = 1; y < h; y += 1) {
+      const current = rowLum(y);
+      detail[y] = Math.abs(current - previous);
+      previous = current;
+      if (detail[y] > maxDetail) {
+        maxDetail = detail[y];
+      }
+    }
+
+    if (maxDetail < 0.6) {
+      return null; // essentially flat — don't guess
+    }
+
+    const threshold = maxDetail * 0.12;
+    const need = 3; // consecutive detailed rows to count as content
+    const firstContent = scanForContent(detail, threshold, need, 1, h, 1);
+    const lastContent = scanForContent(detail, threshold, need, h - 1, 0, -1);
+    if (firstContent < 0 || lastContent < 0) {
+      return null;
+    }
+
+    const topPad = firstContent / h;
+    const bottomPad = (h - 1 - lastContent) / h;
+    const pad = Math.min(topPad, bottomPad);
+    return Math.min(1, Math.max(0.3, 1 - 2 * pad));
+  } catch (error) {
+    return null; // tainted canvas or read failure — fall back to default
+  }
+}
+
+function scanForContent(detail, threshold, need, start, end, step) {
+  let run = 0;
+  for (let y = start; y !== end; y += step) {
+    if (detail[y] > threshold) {
+      run += 1;
+      if (run >= need) {
+        return y - step * (need - 1);
+      }
+    } else {
+      run = 0;
+    }
+  }
+  return -1;
 }
 
 function configureEyeTexture(texture, eye) {

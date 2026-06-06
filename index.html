@@ -350,7 +350,7 @@ button.subtle:hover{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.16</div>
+  <div id="rev">rev.17</div>
 
   <input
     type="file"
@@ -388,7 +388,13 @@ button.subtle:hover{
   </div>
 
   <div class="settingRow" id="cropSliderRow" style="display:none">
-    <input id="cropSlider" type="range" min="0.3" max="1" step="0.02" value="0.62" />
+    <label for="cropSlider">Amount</label>
+    <input id="cropSlider" type="range" min="0" max="0.7" step="0.02" value="0.38" />
+  </div>
+
+  <div class="settingRow">
+    <label for="superRes">Super res</label>
+    <input id="superRes" type="range" min="1" max="2" step="0.1" value="1.4" />
   </div>
 
   <button id="clearButton" type="button" class="panelButton" style="display:none">Clear saved library</button>
@@ -412,7 +418,7 @@ button.subtle:hover{
   }
 }
 </script>
-<script type="module" src="app.js?v=16"></script>
+<script type="module" src="app.js?v=17"></script>
 
 </body>
 </html>

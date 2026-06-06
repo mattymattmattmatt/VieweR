@@ -551,11 +551,11 @@ function applyPanoTextures(baseTexture) {
 
 // Estimate the blurry letterbox padding each eye has top and bottom. These
 // conversions keep the real panorama as a SHARP band with a fake BLURRY fill
-// above/below and a hard line between them. The blur has almost no fine
-// horizontal detail (it's blurred), while real content — even smooth sky — sits
-// inside that band. So we: (1) find the textured "core" via horizontal detail,
-// (2) above the core, the blur→content edge is the strongest brightness step,
-// (3) crop to that line. This keeps real sky/ground and removes only the fill.
+// above/below and a hard line between them. We (1) find the textured "core" via
+// horizontal detail (blur has almost none), then (2) above/below the core, the
+// blur→content line is the strongest COLOUR step (using RGB, not just
+// brightness, so a sky-blur→sky line — similar brightness, different hue — is
+// still found), and (3) crop to that line, keeping real sky/ground.
 function detectContentCrop(image) {
   try {
     const sourceWidth = image.naturalWidth || image.width;
@@ -564,7 +564,7 @@ function detectContentCrop(image) {
       return null;
     }
 
-    const w = 32;
+    const w = 48;
     const h = 256;
     const canvas = document.createElement('canvas');
     canvas.width = w;
@@ -574,24 +574,33 @@ function detectContentCrop(image) {
     ctx.drawImage(image, 0, 0, sourceWidth, Math.floor(sourceHeight / 2), 0, 0, w, h);
     const data = ctx.getImageData(0, 0, w, h).data;
 
-    const lumAt = (x, y) => {
-      const i = (y * w + x) * 4;
-      return 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
-    };
-
-    const rowLum = new Float32Array(h); // average brightness of the row
-    const hTexture = new Float32Array(h); // horizontal detail (sharpness) of the row
+    const meanR = new Float32Array(h);
+    const meanG = new Float32Array(h);
+    const meanB = new Float32Array(h);
+    const hTexture = new Float32Array(h); // horizontal luminance detail (sharpness)
     for (let y = 0; y < h; y += 1) {
-      let sum = lumAt(0, y);
+      let sr = 0;
+      let sg = 0;
+      let sb = 0;
       let edges = 0;
-      let prev = sum;
-      for (let x = 1; x < w; x += 1) {
-        const l = lumAt(x, y);
-        sum += l;
-        edges += Math.abs(l - prev);
-        prev = l;
+      let prevLum = 0;
+      for (let x = 0; x < w; x += 1) {
+        const i = (y * w + x) * 4;
+        const r = data[i];
+        const g = data[i + 1];
+        const b = data[i + 2];
+        sr += r;
+        sg += g;
+        sb += b;
+        const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        if (x > 0) {
+          edges += Math.abs(lum - prevLum);
+        }
+        prevLum = lum;
       }
-      rowLum[y] = sum / w;
+      meanR[y] = sr / w;
+      meanG[y] = sg / w;
+      meanB[y] = sb / w;
       hTexture[y] = edges / (w - 1);
     }
 
@@ -625,14 +634,24 @@ function detectContentCrop(image) {
       return null;
     }
 
-    // The blur→content line is the strongest brightness step between the edge
-    // and the core. Require it to clearly stand out, else don't crop that side.
-    const vGrad = (y) => Math.abs(rowLum[y] - rowLum[y - 1]);
+    // Colour step between adjacent rows (sum over R,G,B) — catches the line even
+    // when blur and content are similar in brightness but differ in hue.
+    const colorStep = (y) => Math.abs(meanR[y] - meanR[y - 1]) + Math.abs(meanG[y] - meanG[y - 1]) + Math.abs(meanB[y] - meanB[y - 1]);
+
+    // Baseline = median colour step, so "stands out" adapts to the image.
+    const steps = [];
+    for (let y = 1; y < h; y += 1) {
+      steps.push(colorStep(y));
+    }
+    steps.sort((a, b) => a - b);
+    const medianStep = steps[Math.floor(steps.length / 2)] || 0;
+    const minStep = Math.max(10, medianStep * 2.5);
+
     const boundary = (lo, hi) => {
       let best = -1;
       let bestVal = 0;
       for (let y = Math.max(1, lo); y < hi; y += 1) {
-        const g = vGrad(y);
+        const g = colorStep(y);
         if (g > bestVal) {
           bestVal = g;
           best = y;
@@ -644,11 +663,11 @@ function detectContentCrop(image) {
     let top = 0;
     let bottom = 0;
     const topEdge = boundary(2, coreTop);
-    if (topEdge.index > 1 && topEdge.value > 6) {
+    if (topEdge.index > 1 && topEdge.value > minStep) {
       top = (topEdge.index + 1) / h;
     }
     const bottomEdge = boundary(coreBottom + 1, h - 1);
-    if (bottomEdge.index > 1 && bottomEdge.value > 6) {
+    if (bottomEdge.index > 1 && bottomEdge.value > minStep) {
       bottom = (h - bottomEdge.index) / h;
     }
 

@@ -1817,7 +1817,7 @@ async function createThumbnailEyes(file) {
   // Preferred path: decode straight to a small bitmap (low memory).
   if (typeof createImageBitmap === 'function') {
     try {
-      const bitmap = await createImageBitmap(file, { resizeWidth: 1024, resizeQuality: 'low' });
+      const bitmap = await createImageBitmap(file, { resizeWidth: 1920, resizeQuality: 'medium' });
       const eyes = {
         left: halfTexture(bitmap, bitmap.width, bitmap.height, 'top'),
         right: halfTexture(bitmap, bitmap.width, bitmap.height, 'bottom'),

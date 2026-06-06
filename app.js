@@ -23,12 +23,13 @@ const ROTATION_STEP = Math.PI / 6;
 const STICK_TRIGGER = 0.6;
 const STICK_RELEASE = 0.3;
 
-// Fraction of each eye's vertical field kept in the main view. Many top/bottom
-// stereo photos pad the poles with blur; rendering only the central band on a
-// matching partial sphere drops that blur (1 = full sphere, old behaviour).
-// "Auto" uses the default; turning Auto off exposes a manual slider.
-const DEFAULT_PANO_CROP = 0.62;
-let panoCrop = DEFAULT_PANO_CROP;
+// How much of each eye's vertical field to drop at the top and bottom. Many
+// top/bottom stereo photos pad the poles with blur (often asymmetrically), so we
+// render only the kept band on a matching partial sphere. cropTop/cropBottom are
+// independent fractions removed from each end (0,0 = full sphere).
+const DEFAULT_PANO_CROP = 0.62; // default kept fraction (symmetric)
+let cropTop = (1 - DEFAULT_PANO_CROP) / 2;
+let cropBottom = (1 - DEFAULT_PANO_CROP) / 2;
 let cropAuto = true;
 let manualCrop = DEFAULT_PANO_CROP;
 
@@ -59,9 +60,7 @@ let galleryDownArrow;
 let galleryScroll = 0;
 let menuGroup;
 let settingsMenuGroup;
-let vrPassthroughButton;
 let vrCropButton;
-let vrResButton;
 let loadingText;
 let statusMessage;
 let enterVRButton;
@@ -244,7 +243,7 @@ function setupSettings() {
 }
 
 // Pole-crop control: Auto (per-image detection) or Manual with a "Crop amount"
-// slider, where higher = more removed (so panoCrop = 1 - amount).
+// slider, where higher = more removed (kept fraction = 1 - amount).
 function setupCropControls() {
   const autoButton = document.getElementById('cropAuto');
   const sliderRow = document.getElementById('cropSliderRow');
@@ -266,7 +265,7 @@ function setupCropControls() {
       const amount = parseFloat(slider.value) || 0;
       manualCrop = Math.min(1, Math.max(0.3, 1 - amount));
       if (!cropAuto) {
-        setPanoCrop(manualCrop);
+        setManualCrop(manualCrop);
       }
       persist('viewer-crop-manual', String(manualCrop));
     });
@@ -296,7 +295,7 @@ function setupCropControls() {
         loadStereoImage(imageFiles[currentImageIndex]);
       }
     } else {
-      setPanoCrop(manualCrop);
+      setManualCrop(manualCrop);
     }
   }
 }
@@ -480,12 +479,12 @@ function createPanoSpheres() {
   scene.add(panoGroup);
 }
 
-// Render only the central panoCrop band of latitude so the blurry poles of
-// padded stereo photos fall outside the geometry (you see the dark backdrop
-// there instead). thetaStart/thetaLength reduce to a full sphere at crop = 1.
+// Render only the kept latitude band so the blurry padded poles fall outside the
+// geometry. cropTop/cropBottom are removed independently, so an image with more
+// blur on top than bottom is trimmed correctly (not symmetrically).
 function buildPanoGeometry() {
-  const thetaStart = Math.PI * (1 - panoCrop) / 2;
-  const thetaLength = Math.PI * panoCrop;
+  const thetaStart = Math.PI * cropTop;
+  const thetaLength = Math.PI * Math.max(0.1, 1 - cropTop - cropBottom);
   const geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, thetaStart, thetaLength);
   geometry.scale(-1, 1, 1);
 
@@ -497,10 +496,15 @@ function buildPanoGeometry() {
   }
 }
 
-// Apply a new pole-crop value live: rebuild the sphere band and re-map the
-// current eye textures (no reload needed).
-function setPanoCrop(value) {
-  panoCrop = value;
+// Set a symmetric manual kept-fraction and apply it live (rebuild band + re-map).
+function setManualCrop(keptFraction) {
+  const removed = Math.min(0.8, Math.max(0, 1 - keptFraction));
+  cropTop = removed / 2;
+  cropBottom = removed / 2;
+  applyCropLive();
+}
+
+function applyCropLive() {
   buildPanoGeometry();
   if (leftTexture) {
     configureEyeTexture(leftTexture, 'top');
@@ -510,13 +514,20 @@ function setPanoCrop(value) {
   }
 }
 
+function keptFraction() {
+  return 1 - cropTop - cropBottom;
+}
+
 function applyPanoTextures(baseTexture) {
   disposePanoTextures();
 
-  // In Auto mode, detect this image's blurry padding and crop to the sharp
-  // content; otherwise keep the manual value. Then rebuild the sphere band.
+  // In Auto mode, detect this image's blurry padding (top and bottom measured
+  // separately) and crop each end to the sharp content; otherwise keep the
+  // manual value. Then rebuild the sphere band.
   if (cropAuto) {
-    panoCrop = detectContentCrop(baseTexture.image) ?? DEFAULT_PANO_CROP;
+    const detected = detectContentCrop(baseTexture.image);
+    cropTop = detected ? detected.top : (1 - DEFAULT_PANO_CROP) / 2;
+    cropBottom = detected ? detected.bottom : (1 - DEFAULT_PANO_CROP) / 2;
   }
   buildPanoGeometry();
 
@@ -594,10 +605,18 @@ function detectContentCrop(image) {
       return null;
     }
 
-    const topPad = firstContent / h;
-    const bottomPad = (h - 1 - lastContent) / h;
-    const pad = Math.min(topPad, bottomPad);
-    return Math.min(1, Math.max(0.3, 1 - 2 * pad));
+    // Top and bottom padding measured independently so asymmetric blur (more on
+    // top than bottom, common with these conversions) is trimmed correctly.
+    const clampPad = (p) => Math.min(0.45, Math.max(0, p));
+    let top = clampPad(firstContent / h);
+    let bottom = clampPad((h - 1 - lastContent) / h);
+    // Keep at least a 20% band.
+    if (1 - top - bottom < 0.2) {
+      const scale = 0.8 / (top + bottom);
+      top *= scale;
+      bottom *= scale;
+    }
+    return { top, bottom };
   } catch (error) {
     return null; // tainted canvas or read failure — fall back to default
   }
@@ -619,11 +638,11 @@ function scanForContent(detail, threshold, need, start, end, step) {
 }
 
 function configureEyeTexture(texture, eye) {
-  // Select this eye's half of the file, then keep only its central panoCrop
-  // band (matching the partial sphere). Derived so crop = 1 == old full mapping.
-  const repeatY = 0.5 * panoCrop;
-  const halfBase = eye === 'top' ? 0.5 : 0.0;
-  const offsetY = halfBase + (1 - panoCrop) / 4;
+  // Select this eye's half of the file, then keep only the [cropTop, cropBottom]
+  // band, matching the partial sphere. Derived so cropTop=cropBottom=0 == full.
+  const kept = Math.max(0.1, 1 - cropTop - cropBottom);
+  const repeatY = 0.5 * kept;
+  const offsetY = (eye === 'top' ? 0.5 : 0.0) + 0.5 * cropBottom;
 
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping; // seamless 360° horizontally
@@ -792,36 +811,27 @@ function createMenu() {
   createSettingsMenu();
 }
 
-// In-VR settings: just the controls that make sense in the headset — top/bottom
-// crop (live), super res, and passthrough. Uses +/- buttons since 3D sliders are
-// fiddly to drag.
+// In-VR settings: only top/bottom crop, which is the one control that applies
+// live. (Super res and passthrough need a fresh session, so they stay on the 2D
+// title screen.) +/- buttons since 3D sliders are fiddly to drag.
 function createSettingsMenu() {
   settingsMenuGroup = new THREE.Group();
   settingsMenuGroup.visible = false;
 
-  vrPassthroughButton = createMenuButton('PASSTHROUGH', 0, 0.5, 1.2, MENU_BUTTON_HEIGHT);
-  vrPassthroughButton.userData.onClick = toggleVrPassthrough;
-
-  const cropMinus = createMenuButton('–', -0.66, 0.18, 0.34, MENU_BUTTON_HEIGHT);
-  vrCropButton = createMenuButton('CROP', 0, 0.18, 0.84, MENU_BUTTON_HEIGHT);
-  const cropPlus = createMenuButton('+', 0.66, 0.18, 0.34, MENU_BUTTON_HEIGHT);
+  const cropMinus = createMenuButton('–', -0.66, 0.16, 0.34, MENU_BUTTON_HEIGHT);
+  vrCropButton = createMenuButton('CROP', 0, 0.16, 0.84, MENU_BUTTON_HEIGHT);
+  const cropPlus = createMenuButton('+', 0.66, 0.16, 0.34, MENU_BUTTON_HEIGHT);
   cropMinus.userData.onClick = () => adjustVrCrop(-0.05);
   vrCropButton.userData.onClick = toggleVrCropAuto;
   cropPlus.userData.onClick = () => adjustVrCrop(0.05);
 
-  const resMinus = createMenuButton('–', -0.66, -0.14, 0.34, MENU_BUTTON_HEIGHT);
-  vrResButton = createMenuButton('RES', 0, -0.14, 0.84, MENU_BUTTON_HEIGHT);
-  const resPlus = createMenuButton('+', 0.66, -0.14, 0.34, MENU_BUTTON_HEIGHT);
-  resMinus.userData.onClick = () => adjustVrRes(-0.1);
-  resPlus.userData.onClick = () => adjustVrRes(0.1);
-
-  const backButton = createMenuButton('BACK', 0, -0.5, 0.84, MENU_BUTTON_HEIGHT);
+  const backButton = createMenuButton('BACK', 0, -0.16, 0.84, MENU_BUTTON_HEIGHT);
   backButton.userData.onClick = () => {
     hideSettingsMenu();
     showMenu();
   };
 
-  [vrPassthroughButton, cropMinus, vrCropButton, cropPlus, resMinus, vrResButton, resPlus, backButton].forEach((button) => {
+  [cropMinus, vrCropButton, cropPlus, backButton].forEach((button) => {
     settingsMenuGroup.add(button);
     interactiveObjects.push(button);
   });
@@ -843,24 +853,7 @@ function hideSettingsMenu() {
 }
 
 function refreshSettingsLabels() {
-  if (!arSupported) {
-    setMenuButtonText(vrPassthroughButton, 'PASSTHRU N/A');
-  } else {
-    setMenuButtonText(vrPassthroughButton, `PASSTHRU: ${passthroughEnabled ? 'ON' : 'OFF'}`);
-  }
-  setMenuButtonText(vrCropButton, cropAuto ? 'CROP: AUTO' : `CROP: ${Math.round((1 - panoCrop) * 100)}%`);
-  setMenuButtonText(vrResButton, `RES: ${superSample.toFixed(1)}x`);
-}
-
-function toggleVrPassthrough() {
-  if (!arSupported) {
-    return;
-  }
-  passthroughEnabled = !passthroughEnabled;
-  persist('viewer-passthrough', passthroughEnabled ? '1' : '0');
-  updatePassthroughToggle();
-  refreshSettingsLabels();
-  flashMessage('Passthrough applies next time you enter VR');
+  setMenuButtonText(vrCropButton, cropAuto ? 'CROP: AUTO' : `CROP: ${Math.round((1 - keptFraction()) * 100)}%`);
 }
 
 function toggleVrCropAuto() {
@@ -872,7 +865,7 @@ function toggleVrCropAuto() {
       loadStereoImage(imageFiles[currentImageIndex]);
     }
   } else {
-    setPanoCrop(manualCrop);
+    setManualCrop(manualCrop);
   }
   refreshSettingsLabels();
 }
@@ -883,15 +876,9 @@ function adjustVrCrop(deltaAmount) {
   const amount = Math.min(0.7, Math.max(0, (1 - manualCrop) + deltaAmount));
   manualCrop = 1 - amount;
   persist('viewer-crop-manual', String(manualCrop));
-  setPanoCrop(manualCrop);
+  setManualCrop(manualCrop);
   syncCropDom();
   refreshSettingsLabels();
-}
-
-function adjustVrRes(delta) {
-  setSuperSample(Math.min(2, Math.max(1, Math.round((superSample + delta) * 10) / 10)));
-  refreshSettingsLabels();
-  flashMessage('Super res applies next time you enter VR');
 }
 
 // Keep the 2D settings panel in sync with changes made in VR.
@@ -911,75 +898,81 @@ function syncCropDom() {
 }
 
 function createMenuButton(text, x, y, width, height) {
+  const aspect = width / height;
   const mesh = new THREE.Mesh(
     new THREE.PlaneGeometry(width, height),
-    new THREE.MeshBasicMaterial({ map: createButtonTexture(text), transparent: true }),
+    new THREE.MeshBasicMaterial({ map: createButtonTexture(text, aspect), transparent: true }),
   );
 
   mesh.position.set(x, y, 0);
+  mesh.userData.aspect = aspect;
   mesh.userData.defaultScale = new THREE.Vector3(1, 1, 1);
   return mesh;
 }
 
-function createButtonTexture(text) {
+// Render the button label to a canvas whose aspect matches the button, so the
+// pill and text aren't horizontally stretched on wide buttons.
+function createButtonTexture(text, aspect = 2.6) {
+  const h = 256;
+  const w = Math.round(h * aspect);
   const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 384;
+  canvas.width = w;
+  canvas.height = h;
   const ctx = canvas.getContext('2d');
 
-  const pad = 30;
+  const pad = 20;
   const x = pad;
   const y = pad;
-  const w = canvas.width - pad * 2;
-  const h = canvas.height - pad * 2;
-  const radius = h / 2; // pill / stadium shape
+  const bw = w - pad * 2;
+  const bh = h - pad * 2;
+  const radius = bh / 2; // pill / stadium shape
 
   // Soft outer glow.
   ctx.save();
   ctx.shadowColor = 'rgba(50, 110, 190, 0.45)';
-  ctx.shadowBlur = 28;
+  ctx.shadowBlur = 20;
   ctx.fillStyle = 'rgba(18, 24, 34, 0.97)';
-  roundRect(ctx, x, y, w, h, radius);
+  roundRect(ctx, x, y, bw, bh, radius);
   ctx.fill();
   ctx.restore();
 
   // Body gradient + top highlight, clipped to the pill.
   ctx.save();
-  roundRect(ctx, x, y, w, h, radius);
+  roundRect(ctx, x, y, bw, bh, radius);
   ctx.clip();
 
-  const body = ctx.createLinearGradient(0, y, 0, y + h);
+  const body = ctx.createLinearGradient(0, y, 0, y + bh);
   body.addColorStop(0, '#30405b');
   body.addColorStop(0.55, '#1c2738');
   body.addColorStop(1, '#121826');
   ctx.fillStyle = body;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillRect(0, 0, w, h);
 
-  const highlight = ctx.createLinearGradient(0, y, 0, y + h * 0.5);
+  const highlight = ctx.createLinearGradient(0, y, 0, y + bh * 0.5);
   highlight.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
   highlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
   ctx.fillStyle = highlight;
-  ctx.fillRect(0, 0, canvas.width, y + h * 0.5);
+  ctx.fillRect(0, 0, w, y + bh * 0.5);
   ctx.restore();
 
   // Crisp light border.
   ctx.lineWidth = 3;
   ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
-  roundRect(ctx, x + 1.5, y + 1.5, w - 3, h - 3, radius - 1.5);
+  roundRect(ctx, x + 1.5, y + 1.5, bw - 3, bh - 3, radius - 1.5);
   ctx.stroke();
 
-  // Label.
+  // Label (sized to button height, not width).
   ctx.fillStyle = '#eef5ff';
-  ctx.font = '600 86px system-ui, "Segoe UI", Roboto, sans-serif';
+  ctx.font = `600 ${Math.round(bh * 0.42)}px system-ui, "Segoe UI", Roboto, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if ('letterSpacing' in ctx) {
-    ctx.letterSpacing = '5px';
+    ctx.letterSpacing = '3px';
   }
   ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
-  ctx.shadowBlur = 6;
+  ctx.shadowBlur = 5;
   ctx.shadowOffsetY = 2;
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 3, w - 80);
+  ctx.fillText(text, w / 2, h / 2 + 2, bw - 36);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
@@ -990,7 +983,7 @@ function createButtonTexture(text) {
 // Replace a menu button's label texture (used by the in-VR settings panel).
 function setMenuButtonText(mesh, text) {
   const old = mesh.material.map;
-  mesh.material.map = createButtonTexture(text);
+  mesh.material.map = createButtonTexture(text, mesh.userData.aspect ?? 2.6);
   mesh.material.needsUpdate = true;
   old?.dispose?.();
 }

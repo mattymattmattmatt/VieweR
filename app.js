@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { XRHandModelFactory } from 'three/addons/webxr/XRHandModelFactory.js';
+import { XRControllerModelFactory } from 'three/addons/webxr/XRControllerModelFactory.js';
 
 const SUPPORTED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/avif'];
 // Pick up images even when the headset reports an empty MIME type (common for
@@ -68,7 +69,11 @@ let statusMessage;
 let enterVRButton;
 
 const controllers = [];
+const grips = [];
 const hands = [];
+
+// How far the laser reaches when it isn't resting on a button/thumbnail.
+const POINTER_REACH = 6;
 const interactiveObjects = [];
 const galleryObjects = [];
 
@@ -1276,6 +1281,8 @@ function handleSessionEnd() {
 }
 
 function setupControllers() {
+  const modelFactory = new XRControllerModelFactory();
+
   for (let i = 0; i < 2; i += 1) {
     const controller = renderer.xr.getController(i);
     controller.userData.stickActive = false;
@@ -1302,25 +1309,97 @@ function setupControllers() {
       clickFromRay(controller);
     });
 
-    const line = new THREE.Line(
-      new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, -1)]),
-      new THREE.LineBasicMaterial({ color: 0x66ccff }),
-    );
-    line.name = 'pointer';
-    line.scale.z = 5;
-    controller.add(line);
+    const pointer = createPointer();
+    controller.add(pointer);
+    controller.userData.pointer = pointer;
 
     scene.add(controller);
     controllers.push(controller);
+
+    // The grip space carries the physical Touch controller model. The factory
+    // loads the correct mesh for whatever hardware reports in (Quest 3's
+    // Touch Plus controllers included) from the WebXR input-profiles CDN.
+    const grip = renderer.xr.getControllerGrip(i);
+    grip.add(modelFactory.createControllerModel(grip));
+    scene.add(grip);
+    grips.push(grip);
+  }
+}
+
+// A laser pointer: a thin tapered beam plus a ring reticle that rests on
+// whatever the beam touches. Both live under the controller's target-ray space
+// and point down -Z.
+function createPointer() {
+  const group = new THREE.Group();
+  group.name = 'pointer';
+
+  // Tapered cylinder: thicker at the controller, fading to a fine tip. Built
+  // length 1 along -Z so we can scale.z to the live reach each frame.
+  const beamGeo = new THREE.CylinderGeometry(0.0016, 0.0042, 1, 12, 1, true);
+  beamGeo.rotateX(-Math.PI / 2); // +Y -> -Z
+  beamGeo.translate(0, 0, -0.5); // base at origin, tip at z = -1
+  const beamMat = new THREE.MeshBasicMaterial({
+    color: 0x66ccff,
+    transparent: true,
+    opacity: 0.65,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const beam = new THREE.Mesh(beamGeo, beamMat);
+  beam.renderOrder = 5;
+  group.add(beam);
+  group.userData.beam = beam;
+
+  const reticleMat = new THREE.MeshBasicMaterial({
+    color: 0x9be0ff,
+    transparent: true,
+    opacity: 0.95,
+    depthWrite: false,
+    depthTest: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const reticle = new THREE.Mesh(new THREE.RingGeometry(0.012, 0.02, 28), reticleMat);
+  reticle.add(new THREE.Mesh(new THREE.CircleGeometry(0.006, 20), reticleMat));
+  reticle.renderOrder = 6;
+  reticle.visible = false;
+  group.add(reticle);
+  group.userData.reticle = reticle;
+
+  return group;
+}
+
+// Stretch the beam to the hovered target (so it visually stops at the button
+// surface) and park the reticle on it. With no hit, the beam reaches its full
+// length and the reticle hides.
+function updatePointer(controller, hit) {
+  const pointer = controller.userData.pointer;
+  if (!pointer || !pointer.visible) {
+    return;
+  }
+  const reach = hit ? hit.distance : POINTER_REACH;
+  pointer.userData.beam.scale.z = reach;
+  const reticle = pointer.userData.reticle;
+  if (hit) {
+    reticle.visible = true;
+    reticle.position.set(0, 0, -reach);
+  } else {
+    reticle.visible = false;
   }
 }
 
 function setPointerVisibility(visible) {
   controllers.forEach((controller) => {
-    const pointer = controller.getObjectByName('pointer');
+    const pointer = controller.userData.pointer;
     if (pointer) {
       pointer.visible = visible;
     }
+  });
+  // Show the physical controller models alongside the laser, hide them with it
+  // for a clean view while a panorama fills the headset.
+  grips.forEach((grip) => {
+    grip.visible = visible;
   });
 }
 
@@ -1375,7 +1454,8 @@ function handleController(controller) {
   tempMatrix.identity().extractRotation(controller.matrixWorld);
   raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
   raycaster.ray.direction.set(0, 0, -1).applyMatrix4(tempMatrix);
-  updateHoverState();
+  const hit = updateHoverState();
+  updatePointer(controller, hit);
 }
 
 function pollControllerInput(controller) {

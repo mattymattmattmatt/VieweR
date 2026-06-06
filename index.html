@@ -292,6 +292,13 @@ button.subtle:hover{
   accent-color:#63adff;
 }
 
+#superResValue{
+  min-width:38px;
+  text-align:right;
+  color:rgba(255,255,255,0.7);
+  font-variant-numeric:tabular-nums;
+}
+
 #settingsPanel .settingLink{
   display:block;
   text-align:center;
@@ -350,7 +357,7 @@ button.subtle:hover{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.17</div>
+  <div id="rev">rev.18</div>
 
   <input
     type="file"
@@ -383,7 +390,7 @@ button.subtle:hover{
   </div>
 
   <div class="settingRow">
-    <span>Pole crop</span>
+    <span>Top &amp; bottom crop</span>
     <button id="cropAuto" type="button" class="subtle">Auto</button>
   </div>
 
@@ -395,6 +402,7 @@ button.subtle:hover{
   <div class="settingRow">
     <label for="superRes">Super res</label>
     <input id="superRes" type="range" min="1" max="2" step="0.1" value="1.4" />
+    <span id="superResValue">1.4x</span>
   </div>
 
   <button id="clearButton" type="button" class="panelButton" style="display:none">Clear saved library</button>
@@ -418,7 +426,7 @@ button.subtle:hover{
   }
 }
 </script>
-<script type="module" src="app.js?v=17"></script>
+<script type="module" src="app.js?v=18"></script>
 
 </body>
 </html>

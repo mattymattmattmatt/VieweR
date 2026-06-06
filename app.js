@@ -58,6 +58,10 @@ let galleryUpArrow;
 let galleryDownArrow;
 let galleryScroll = 0;
 let menuGroup;
+let settingsMenuGroup;
+let vrPassthroughButton;
+let vrCropButton;
+let vrResButton;
 let loadingText;
 let statusMessage;
 let enterVRButton;
@@ -297,7 +301,8 @@ function setupCropControls() {
   }
 }
 
-// Super resolution: framebuffer supersampling. Takes effect on entering VR.
+// Super resolution: framebuffer supersampling. Applied to each new session, so
+// changing it takes effect the next time you enter VR (no page reload needed).
 function setupSuperResControl() {
   const slider = document.getElementById('superRes');
   if (!slider) {
@@ -314,12 +319,25 @@ function setupSuperResControl() {
   }
 
   slider.value = String(superSample);
-  renderer.xr.setFramebufferScaleFactor(superSample);
+  setSuperSample(superSample);
   slider.addEventListener('input', () => {
-    superSample = parseFloat(slider.value) || 1.4;
-    renderer.xr.setFramebufferScaleFactor(superSample);
-    persist('viewer-superres', String(superSample));
+    setSuperSample(parseFloat(slider.value) || 1.4);
   });
+}
+
+function setSuperSample(value) {
+  superSample = value;
+  renderer.xr.setFramebufferScaleFactor(superSample);
+  persist('viewer-superres', String(superSample));
+
+  const slider = document.getElementById('superRes');
+  if (slider && slider.value !== String(superSample)) {
+    slider.value = String(superSample);
+  }
+  const label = document.getElementById('superResValue');
+  if (label) {
+    label.textContent = `${superSample.toFixed(1)}x`;
+  }
 }
 
 function persist(key, value) {
@@ -756,20 +774,140 @@ function createMenu() {
   menuGroup = new THREE.Group();
   menuGroup.visible = false;
 
-  // Two actions only. The B/Y button closes the menu, so a Cancel button is
-  // redundant; audio mute was dropped as unused.
-  const thumbnailsButton = createMenuButton('THUMBNAILS', -0.46, 0, 0.84, MENU_BUTTON_HEIGHT);
-  const loadAnotherButton = createMenuButton('LOAD ANOTHER', 0.46, 0, 0.84, MENU_BUTTON_HEIGHT);
+  const row = (MENU_BUTTON_HEIGHT + 0.08) / 2;
+  const thumbnailsButton = createMenuButton('THUMBNAILS', -0.46, row, 0.84, MENU_BUTTON_HEIGHT);
+  const loadAnotherButton = createMenuButton('LOAD ANOTHER', 0.46, row, 0.84, MENU_BUTTON_HEIGHT);
+  const settingsButton = createMenuButton('SETTINGS', 0, -row, 0.84, MENU_BUTTON_HEIGHT);
 
   thumbnailsButton.userData.onClick = showGallery;
   loadAnotherButton.userData.onClick = exitVR;
+  settingsButton.userData.onClick = showSettingsMenu;
 
-  [thumbnailsButton, loadAnotherButton].forEach((button) => {
+  [thumbnailsButton, loadAnotherButton, settingsButton].forEach((button) => {
     menuGroup.add(button);
     interactiveObjects.push(button);
   });
 
   scene.add(menuGroup);
+  createSettingsMenu();
+}
+
+// In-VR settings: just the controls that make sense in the headset — top/bottom
+// crop (live), super res, and passthrough. Uses +/- buttons since 3D sliders are
+// fiddly to drag.
+function createSettingsMenu() {
+  settingsMenuGroup = new THREE.Group();
+  settingsMenuGroup.visible = false;
+
+  vrPassthroughButton = createMenuButton('PASSTHROUGH', 0, 0.5, 1.2, MENU_BUTTON_HEIGHT);
+  vrPassthroughButton.userData.onClick = toggleVrPassthrough;
+
+  const cropMinus = createMenuButton('–', -0.66, 0.18, 0.34, MENU_BUTTON_HEIGHT);
+  vrCropButton = createMenuButton('CROP', 0, 0.18, 0.84, MENU_BUTTON_HEIGHT);
+  const cropPlus = createMenuButton('+', 0.66, 0.18, 0.34, MENU_BUTTON_HEIGHT);
+  cropMinus.userData.onClick = () => adjustVrCrop(-0.05);
+  vrCropButton.userData.onClick = toggleVrCropAuto;
+  cropPlus.userData.onClick = () => adjustVrCrop(0.05);
+
+  const resMinus = createMenuButton('–', -0.66, -0.14, 0.34, MENU_BUTTON_HEIGHT);
+  vrResButton = createMenuButton('RES', 0, -0.14, 0.84, MENU_BUTTON_HEIGHT);
+  const resPlus = createMenuButton('+', 0.66, -0.14, 0.34, MENU_BUTTON_HEIGHT);
+  resMinus.userData.onClick = () => adjustVrRes(-0.1);
+  resPlus.userData.onClick = () => adjustVrRes(0.1);
+
+  const backButton = createMenuButton('BACK', 0, -0.5, 0.84, MENU_BUTTON_HEIGHT);
+  backButton.userData.onClick = () => {
+    hideSettingsMenu();
+    showMenu();
+  };
+
+  [vrPassthroughButton, cropMinus, vrCropButton, cropPlus, resMinus, vrResButton, resPlus, backButton].forEach((button) => {
+    settingsMenuGroup.add(button);
+    interactiveObjects.push(button);
+  });
+
+  scene.add(settingsMenuGroup);
+}
+
+function showSettingsMenu() {
+  menuGroup.visible = false;
+  positionGroupInFrontOfCamera(settingsMenuGroup, 1.7);
+  settingsMenuGroup.visible = true;
+  settingsMenuGroup.scale.setScalar(1);
+  setPointerVisibility(true);
+  refreshSettingsLabels();
+}
+
+function hideSettingsMenu() {
+  settingsMenuGroup.visible = false;
+}
+
+function refreshSettingsLabels() {
+  if (!arSupported) {
+    setMenuButtonText(vrPassthroughButton, 'PASSTHRU N/A');
+  } else {
+    setMenuButtonText(vrPassthroughButton, `PASSTHRU: ${passthroughEnabled ? 'ON' : 'OFF'}`);
+  }
+  setMenuButtonText(vrCropButton, cropAuto ? 'CROP: AUTO' : `CROP: ${Math.round((1 - panoCrop) * 100)}%`);
+  setMenuButtonText(vrResButton, `RES: ${superSample.toFixed(1)}x`);
+}
+
+function toggleVrPassthrough() {
+  if (!arSupported) {
+    return;
+  }
+  passthroughEnabled = !passthroughEnabled;
+  persist('viewer-passthrough', passthroughEnabled ? '1' : '0');
+  updatePassthroughToggle();
+  refreshSettingsLabels();
+  flashMessage('Passthrough applies next time you enter VR');
+}
+
+function toggleVrCropAuto() {
+  cropAuto = !cropAuto;
+  persist('viewer-crop-auto', cropAuto ? '1' : '0');
+  syncCropDom();
+  if (cropAuto) {
+    if (currentImageIndex >= 0 && !imageLoading) {
+      loadStereoImage(imageFiles[currentImageIndex]);
+    }
+  } else {
+    setPanoCrop(manualCrop);
+  }
+  refreshSettingsLabels();
+}
+
+function adjustVrCrop(deltaAmount) {
+  cropAuto = false;
+  persist('viewer-crop-auto', '0');
+  const amount = Math.min(0.7, Math.max(0, (1 - manualCrop) + deltaAmount));
+  manualCrop = 1 - amount;
+  persist('viewer-crop-manual', String(manualCrop));
+  setPanoCrop(manualCrop);
+  syncCropDom();
+  refreshSettingsLabels();
+}
+
+function adjustVrRes(delta) {
+  setSuperSample(Math.min(2, Math.max(1, Math.round((superSample + delta) * 10) / 10)));
+  refreshSettingsLabels();
+  flashMessage('Super res applies next time you enter VR');
+}
+
+// Keep the 2D settings panel in sync with changes made in VR.
+function syncCropDom() {
+  const autoButton = document.getElementById('cropAuto');
+  const sliderRow = document.getElementById('cropSliderRow');
+  const slider = document.getElementById('cropSlider');
+  if (autoButton) {
+    autoButton.textContent = cropAuto ? 'Auto' : 'Manual';
+  }
+  if (sliderRow) {
+    sliderRow.style.display = cropAuto ? 'none' : 'flex';
+  }
+  if (slider) {
+    slider.value = String(1 - manualCrop);
+  }
 }
 
 function createMenuButton(text, x, y, width, height) {
@@ -785,55 +923,76 @@ function createMenuButton(text, x, y, width, height) {
 
 function createButtonTexture(text) {
   const canvas = document.createElement('canvas');
-  canvas.width = 512;
-  canvas.height = 192;
+  canvas.width = 1024;
+  canvas.height = 384;
   const ctx = canvas.getContext('2d');
 
-  const pad = 12;
+  const pad = 30;
   const x = pad;
   const y = pad;
   const w = canvas.width - pad * 2;
   const h = canvas.height - pad * 2;
   const radius = h / 2; // pill / stadium shape
 
-  // Dark frosted-glass body with a soft top sheen, clipped to the pill.
+  // Soft outer glow.
+  ctx.save();
+  ctx.shadowColor = 'rgba(50, 110, 190, 0.45)';
+  ctx.shadowBlur = 28;
+  ctx.fillStyle = 'rgba(18, 24, 34, 0.97)';
+  roundRect(ctx, x, y, w, h, radius);
+  ctx.fill();
+  ctx.restore();
+
+  // Body gradient + top highlight, clipped to the pill.
   ctx.save();
   roundRect(ctx, x, y, w, h, radius);
   ctx.clip();
 
   const body = ctx.createLinearGradient(0, y, 0, y + h);
-  body.addColorStop(0, 'rgba(40, 51, 68, 0.94)');
-  body.addColorStop(1, 'rgba(14, 19, 28, 0.94)');
+  body.addColorStop(0, '#30405b');
+  body.addColorStop(0.55, '#1c2738');
+  body.addColorStop(1, '#121826');
   ctx.fillStyle = body;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  const sheen = ctx.createLinearGradient(0, y, 0, y + h * 0.6);
-  sheen.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
-  sheen.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.fillStyle = sheen;
-  ctx.fillRect(0, 0, canvas.width, y + h * 0.6);
+  const highlight = ctx.createLinearGradient(0, y, 0, y + h * 0.5);
+  highlight.addColorStop(0, 'rgba(255, 255, 255, 0.22)');
+  highlight.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = highlight;
+  ctx.fillRect(0, 0, canvas.width, y + h * 0.5);
   ctx.restore();
 
-  // Thin accent outline.
-  ctx.strokeStyle = 'rgba(99, 173, 255, 0.55)';
+  // Crisp light border.
   ctx.lineWidth = 3;
-  roundRect(ctx, x, y, w, h, radius);
+  ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+  roundRect(ctx, x + 1.5, y + 1.5, w - 3, h - 3, radius - 1.5);
   ctx.stroke();
 
-  // Crisp, letter-spaced label.
-  ctx.fillStyle = '#eaf3ff';
-  ctx.font = '600 42px system-ui, "Segoe UI", sans-serif';
+  // Label.
+  ctx.fillStyle = '#eef5ff';
+  ctx.font = '600 86px system-ui, "Segoe UI", Roboto, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if ('letterSpacing' in ctx) {
-    ctx.letterSpacing = '3px';
+    ctx.letterSpacing = '5px';
   }
-  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 2, w - 40);
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.45)';
+  ctx.shadowBlur = 6;
+  ctx.shadowOffsetY = 2;
+  ctx.fillText(text, canvas.width / 2, canvas.height / 2 + 3, w - 80);
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.anisotropy = renderer?.capabilities?.getMaxAnisotropy?.() ?? 1;
   return texture;
+}
+
+// Replace a menu button's label texture (used by the in-VR settings panel).
+function setMenuButtonText(mesh, text) {
+  const old = mesh.material.map;
+  mesh.material.map = createButtonTexture(text);
+  mesh.material.needsUpdate = true;
+  old?.dispose?.();
 }
 
 function createLoadingIndicator() {
@@ -855,6 +1014,16 @@ function showSphereMessage(text) {
   loadingText.material.needsUpdate = true;
   previous?.dispose?.();
   loadingText.visible = true;
+}
+
+// Show a message briefly, then hide it (for transient confirmations).
+let messageTimer = null;
+function flashMessage(text, duration = 1800) {
+  showSphereMessage(text);
+  clearTimeout(messageTimer);
+  messageTimer = setTimeout(() => {
+    loadingText.visible = false;
+  }, duration);
 }
 
 function createMessageTexture(text) {
@@ -958,7 +1127,7 @@ function toggleMenu() {
     return;
   }
 
-  if (menuGroup.visible) {
+  if (menuGroup.visible || settingsMenuGroup.visible) {
     hideMenu();
   } else {
     showMenu();
@@ -970,6 +1139,7 @@ function showMenu() {
     return;
   }
 
+  hideSettingsMenu();
   positionGroupInFrontOfCamera(menuGroup, 1.7);
   menuGroup.visible = true;
   menuGroup.scale.setScalar(1);
@@ -979,6 +1149,7 @@ function showMenu() {
 
 function hideMenu() {
   menuGroup.visible = false;
+  hideSettingsMenu();
   // Hide the pointer again only when we drop back to the clean panorama view.
   if (!galleryGroup.visible && panoGroup.visible) {
     setPointerVisibility(false);
@@ -1173,7 +1344,7 @@ function rotateSphere(direction, controller) {
 // When a panorama is on screen (no menu, no grid), the trigger steps through
 // the loaded images: left hand -> previous, right hand -> next.
 function handleViewerTrigger(controller) {
-  if (!xrSessionActive || !panoGroup.visible || menuGroup.visible || galleryGroup.visible) {
+  if (!xrSessionActive || !panoGroup.visible || menuGroup.visible || settingsMenuGroup.visible || galleryGroup.visible) {
     return false;
   }
 
@@ -1808,12 +1979,21 @@ function playMatchingAudio(imageName) {
 }
 
 function positionGroupInFrontOfCamera(group, distance) {
-  camera.getWorldDirection(tempDirection);
   camera.getWorldPosition(tempPosition);
+  camera.getWorldDirection(tempDirection);
 
-  group.position.copy(tempPosition).add(tempDirection.multiplyScalar(distance));
-  group.position.y = Math.max(group.position.y, 1.15);
-  group.lookAt(tempPosition.x, group.position.y, tempPosition.z);
+  // Flatten to the horizontal heading (ignore head pitch/roll) so the panel is
+  // always level, at eye height, and squarely in front — not tilted or offset
+  // by where the head happened to be pointing.
+  tempDirection.y = 0;
+  if (tempDirection.lengthSq() < 1e-4) {
+    tempDirection.set(0, 0, -1);
+  }
+  tempDirection.normalize();
+
+  group.position.copy(tempPosition).addScaledVector(tempDirection, distance);
+  group.position.y = tempPosition.y;
+  group.lookAt(tempPosition.x, tempPosition.y, tempPosition.z);
 }
 
 function roundRect(ctx, x, y, width, height, radius) {

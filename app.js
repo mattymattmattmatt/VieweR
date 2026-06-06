@@ -58,6 +58,8 @@ let galleryGroup;
 let galleryUpArrow;
 let galleryDownArrow;
 let galleryScroll = 0;
+let galleryDirty = true;
+let thumbBuildToken = 0;
 let menuGroup;
 let settingsMenuGroup;
 let vrCropButton;
@@ -448,9 +450,11 @@ async function enterVR() {
   document.getElementById('settingsButton')?.style.setProperty('display', 'none');
   document.getElementById('settingsPanel')?.classList.remove('open');
 
-  // Show the whole accumulated collection as thumbnails, and open the most
-  // recently added image straight away.
-  populateGallery(imageFiles);
+  // Open the most recent image straight away. The thumbnail grid is built
+  // lazily the first time it's shown (THUMBNAILS) so we don't decode the whole
+  // library at once on entry — that spikes memory and crashes Quest with many
+  // images loaded.
+  galleryDirty = true;
   currentImageIndex = imageFiles.length - 1;
   loadStereoImage(imageFiles[currentImageIndex]);
 }
@@ -739,8 +743,8 @@ function populateGallery(files) {
   galleryScroll = 0;
 
   // Newest first (top of the list). Cards are created synchronously with a
-  // placeholder so their order is stable, then the real stereo textures are
-  // swapped in as they decode.
+  // placeholder so their order/layout is stable immediately.
+  const pending = [];
   for (let i = files.length - 1; i >= 0; i -= 1) {
     const file = files[i];
     const index = i;
@@ -754,13 +758,30 @@ function populateGallery(files) {
     galleryGroup.add(card);
     galleryObjects.push(card);
     interactiveObjects.push(card);
-
-    createThumbnailEyes(file)
-      .then((eyes) => swapCardEyes(card, eyes))
-      .catch(() => {});
+    pending.push({ card, file });
   }
 
   layoutGallery();
+
+  // Decode the thumbnails ONE AT A TIME (newest/top first). Decoding 15 full
+  // images at once is what crashes Quest, so we serialise it.
+  fillThumbnailsSequentially(pending);
+}
+
+async function fillThumbnailsSequentially(pending) {
+  const token = ++thumbBuildToken; // a newer populate cancels this run
+  for (const { card, file } of pending) {
+    if (token !== thumbBuildToken) {
+      return;
+    }
+    const eyes = await createThumbnailEyes(file).catch(() => null);
+    if (token !== thumbBuildToken) {
+      return; // gallery was rebuilt/cleared meanwhile
+    }
+    if (eyes) {
+      swapCardEyes(card, eyes);
+    }
+  }
 }
 
 // Position the visible window of cards and toggle the scroll arrows.
@@ -794,12 +815,19 @@ function scrollGallery(direction) {
 
 function swapCardEyes(card, eyes) {
   const { leftPlane, rightPlane } = card.userData;
-  leftPlane.material.map?.dispose?.();
-  rightPlane.material.map?.dispose?.();
+  // Don't dispose the shared placeholder (other cards still use it).
+  disposeIfNotShared(leftPlane.material.map);
+  disposeIfNotShared(rightPlane.material.map);
   leftPlane.material.map = eyes.left;
   rightPlane.material.map = eyes.right;
   leftPlane.material.needsUpdate = true;
   rightPlane.material.needsUpdate = true;
+}
+
+function disposeIfNotShared(texture) {
+  if (texture && texture !== sharedPlaceholderTexture) {
+    texture.dispose?.();
+  }
 }
 
 function clearGallery() {
@@ -1200,6 +1228,13 @@ function hideMenu() {
 }
 
 function showGallery() {
+  // Build (or rebuild) the thumbnails lazily, the first time the grid is opened
+  // after the library changed.
+  if (galleryDirty) {
+    galleryDirty = false;
+    populateGallery(imageFiles);
+  }
+
   panoGroup.visible = false;
   galleryGroup.visible = true;
   positionGroupInFrontOfCamera(galleryGroup, 3.0);
@@ -1631,6 +1666,7 @@ function handlePickedFiles(fileList, inputEl) {
   });
 
   imageFiles = loadedFiles.filter(isImageFile);
+  galleryDirty = true;
 
   if (inputEl) {
     inputEl.value = ''; // allow re-picking the same file/folder next time
@@ -1664,6 +1700,7 @@ async function clearLibrary() {
   loadedFiles = [];
   imageFiles = [];
   currentImageIndex = -1;
+  galleryDirty = true;
   clearPanoCache();
   await idbClear().catch(() => {});
   updateEnterVRButton();
@@ -1762,6 +1799,7 @@ async function restoreLibrary() {
   });
 
   imageFiles = loadedFiles.filter(isImageFile);
+  galleryDirty = true;
   updateEnterVRButton();
   updateLibraryControls();
 }
@@ -1773,35 +1811,33 @@ function fileKey(file) {
 
 // Build a stereo pair of thumbnail textures (top half -> left eye, bottom half
 // -> right eye) so each card previews in 3D, matching the main viewer.
+// Decodes the image DOWNSCALED (~1024px wide) so a big library doesn't exhaust
+// memory — thumbnails don't need full resolution.
 async function createThumbnailEyes(file) {
-  const url = URL.createObjectURL(file);
-  let source;
-  let width;
-  let height;
-
-  try {
+  // Preferred path: decode straight to a small bitmap (low memory).
+  if (typeof createImageBitmap === 'function') {
     try {
-      const image = new Image();
-      image.src = url;
-      await image.decode();
-      source = image;
-      width = image.naturalWidth;
-      height = image.naturalHeight;
-    } catch (primaryError) {
-      if (typeof createImageBitmap !== 'function') {
-        throw primaryError;
-      }
-      source = await createImageBitmap(file);
-      width = source.width;
-      height = source.height;
+      const bitmap = await createImageBitmap(file, { resizeWidth: 1024, resizeQuality: 'low' });
+      const eyes = {
+        left: halfTexture(bitmap, bitmap.width, bitmap.height, 'top'),
+        right: halfTexture(bitmap, bitmap.width, bitmap.height, 'bottom'),
+      };
+      bitmap.close?.();
+      return eyes;
+    } catch (error) {
+      /* fall back to <img> below */
     }
+  }
 
-    const eyes = {
-      left: halfTexture(source, width, height, 'top'),
-      right: halfTexture(source, width, height, 'bottom'),
+  const url = URL.createObjectURL(file);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return {
+      left: halfTexture(image, image.naturalWidth, image.naturalHeight, 'top'),
+      right: halfTexture(image, image.naturalWidth, image.naturalHeight, 'bottom'),
     };
-    source.close?.();
-    return eyes;
   } finally {
     URL.revokeObjectURL(url);
   }
@@ -1831,25 +1867,27 @@ function halfTexture(source, width, height, which) {
 }
 
 // Fallback eye pair for images the browser can't decode (e.g. HEIC).
-function createPlaceholderEyes() {
-  return { left: createPlaceholderTexture(), right: createPlaceholderTexture() };
-}
+// One shared placeholder texture for every pending card, so a big grid doesn't
+// allocate dozens of canvases before the real thumbnails decode.
+let sharedPlaceholderTexture = null;
 
-function createPlaceholderTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-  ctx.fillStyle = '#1b2733';
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = 'rgba(255,255,255,0.75)';
-  ctx.font = '600 56px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillText('No preview', canvas.width / 2, canvas.height / 2);
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
+function createPlaceholderEyes() {
+  if (!sharedPlaceholderTexture) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 192;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#1b2733';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '600 40px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Loading…', canvas.width / 2, canvas.height / 2);
+    sharedPlaceholderTexture = new THREE.CanvasTexture(canvas);
+    sharedPlaceholderTexture.colorSpace = THREE.SRGBColorSpace;
+  }
+  return { left: sharedPlaceholderTexture, right: sharedPlaceholderTexture };
 }
 
 async function loadStereoImage(imageFile) {
@@ -2066,7 +2104,7 @@ function disposeObject(object) {
     if (Array.isArray(child.material)) {
       child.material.forEach((material) => material.dispose?.());
     } else {
-      child.material?.map?.dispose?.();
+      disposeIfNotShared(child.material?.map); // keep the shared placeholder alive
       child.material?.dispose?.();
     }
   });

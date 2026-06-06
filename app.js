@@ -597,22 +597,29 @@ function detectContentCrop(image) {
       return null; // essentially flat — don't guess
     }
 
-    const threshold = maxDetail * 0.12;
-    const need = 3; // consecutive detailed rows to count as content
+    // Threshold from the MEDIAN row detail, not the max. A single sharp edge no
+    // longer inflates it, so smooth-but-real regions (sky, walls) stay above the
+    // line and aren't mistaken for the near-flat blurry smear (which sits well
+    // below). The absolute floor keeps catching the smear when the median is low.
+    const sorted = Array.from(detail.subarray(1)).sort((a, b) => a - b);
+    const median = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    const threshold = Math.max(0.7, median * 0.45);
+    const need = 2;
     const firstContent = scanForContent(detail, threshold, need, 1, h, 1);
     const lastContent = scanForContent(detail, threshold, need, h - 1, 0, -1);
     if (firstContent < 0 || lastContent < 0) {
       return null;
     }
 
-    // Top and bottom padding measured independently so asymmetric blur (more on
-    // top than bottom, common with these conversions) is trimmed correctly.
-    const clampPad = (p) => Math.min(0.45, Math.max(0, p));
-    let top = clampPad(firstContent / h);
-    let bottom = clampPad((h - 1 - lastContent) / h);
-    // Keep at least a 20% band.
-    if (1 - top - bottom < 0.2) {
-      const scale = 0.8 / (top + bottom);
+    // Trim each end independently, but conservatively: cap each side and the
+    // total, and bail if it wants to remove a lot (that means it's misreading
+    // smooth content as padding — better to under-crop than eat the image).
+    const SIDE_CAP = 0.3;
+    const TOTAL_CAP = 0.45;
+    let top = Math.min(SIDE_CAP, Math.max(0, firstContent / h));
+    let bottom = Math.min(SIDE_CAP, Math.max(0, (h - 1 - lastContent) / h));
+    if (top + bottom > TOTAL_CAP) {
+      const scale = TOTAL_CAP / (top + bottom);
       top *= scale;
       bottom *= scale;
     }

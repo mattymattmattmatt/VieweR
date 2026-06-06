@@ -41,6 +41,7 @@ let renderer;
 let environmentMesh;
 let passthroughEnabled = false;
 let arSupported = false;
+let panoBrightness = 1;
 let panoGroup;
 let leftSphere;
 let rightSphere;
@@ -117,6 +118,7 @@ function init() {
   setupInputs();
   setupDropZone();
   setupPassthroughToggle();
+  setupSettings();
   restoreLibrary();
 
   window.addEventListener('resize', onWindowResize);
@@ -182,13 +184,62 @@ function updatePassthroughToggle() {
   }
 
   if (xrSupportChecked && !arSupported) {
-    button.textContent = 'Passthrough: N/A';
+    button.textContent = 'N/A';
     button.disabled = true;
     return;
   }
 
   button.disabled = false;
-  button.textContent = `Passthrough: ${passthroughEnabled ? 'On' : 'Off'}`;
+  button.textContent = passthroughEnabled ? 'On' : 'Off';
+}
+
+// Floating settings panel (gear button): passthrough, brightness, and a link
+// to the bundled Cardboard Camera converter.
+function setupSettings() {
+  const gear = document.getElementById('settingsButton');
+  const panel = document.getElementById('settingsPanel');
+  const close = document.getElementById('settingsClose');
+  const brightness = document.getElementById('brightness');
+
+  if (gear && panel) {
+    gear.addEventListener('click', () => panel.classList.toggle('open'));
+  }
+  if (close && panel) {
+    close.addEventListener('click', () => panel.classList.remove('open'));
+  }
+
+  if (brightness) {
+    try {
+      const saved = parseFloat(localStorage.getItem('viewer-brightness'));
+      if (!Number.isNaN(saved)) {
+        panoBrightness = saved;
+      }
+    } catch (error) {
+      /* ignore storage failures */
+    }
+    brightness.value = String(panoBrightness);
+    brightness.addEventListener('input', () => {
+      panoBrightness = parseFloat(brightness.value) || 1;
+      applyBrightness();
+      try {
+        localStorage.setItem('viewer-brightness', String(panoBrightness));
+      } catch (error) {
+        /* ignore storage failures */
+      }
+    });
+  }
+
+  applyBrightness();
+}
+
+// Brightness multiplies the panorama materials' colour (pano only — the menu
+// and thumbnails are untouched).
+function applyBrightness() {
+  [leftSphere, rightSphere].forEach((sphere) => {
+    if (sphere?.material?.map) {
+      sphere.material.color.setScalar(panoBrightness);
+    }
+  });
 }
 
 function createEnterVRButton() {
@@ -276,6 +327,8 @@ async function enterVR() {
   document.getElementById('ui').style.display = 'none';
   enterVRButton.style.display = 'none';
   statusMessage.style.display = 'none';
+  document.getElementById('settingsButton')?.style.setProperty('display', 'none');
+  document.getElementById('settingsPanel')?.classList.remove('open');
 
   // Show the whole accumulated collection as thumbnails, and open the most
   // recently added image straight away.
@@ -327,11 +380,11 @@ function applyPanoTextures(baseTexture) {
   configureEyeTexture(rightTexture, 'bottom');
 
   leftSphere.material.map = leftTexture;
-  leftSphere.material.color.set(0xffffff);
+  leftSphere.material.color.setScalar(panoBrightness);
   leftSphere.material.needsUpdate = true;
 
   rightSphere.material.map = rightTexture;
-  rightSphere.material.color.set(0xffffff);
+  rightSphere.material.color.setScalar(panoBrightness);
   rightSphere.material.needsUpdate = true;
 }
 
@@ -750,6 +803,7 @@ function handleSessionEnd() {
   setPointerVisibility(true);
   document.getElementById('ui').style.display = 'flex';
   enterVRButton.style.display = 'block';
+  document.getElementById('settingsButton')?.style.setProperty('display', 'block');
   updateEnterVRButton();
   updateLibraryControls();
   clearPanoCache(); // free decoded panoramas when leaving VR

@@ -67,6 +67,12 @@ let vrCropButton;
 let loadingText;
 let statusMessage;
 let enterVRButton;
+let infoPanel;
+
+// Capture-date info panel (toggled with the A/X button). Dates are read from the
+// loaded JPEG's raw bytes once and cached by fileKey.
+const infoCache = new Map();
+let currentImageDate = null;
 
 const controllers = [];
 const grips = [];
@@ -128,6 +134,7 @@ function init() {
   createGallery();
   createMenu();
   createLoadingIndicator();
+  createInfoPanel();
   setupControllers();
   setupHands();
   setupInputs();
@@ -1147,6 +1154,311 @@ function wrapText(ctx, text, maxWidth) {
   return lines;
 }
 
+// A small floating panel showing the photo's capture date, toggled with the
+// A/X button. It lives on its own (not in interactiveObjects) since it's purely
+// informational — no laser interaction needed.
+function createInfoPanel() {
+  infoPanel = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.1, 0.5),
+    new THREE.MeshBasicMaterial({ map: createInfoTexture('Photo info', 'No details'), transparent: true }),
+  );
+  infoPanel.renderOrder = 21; // above the panorama and loading text
+  infoPanel.visible = false;
+  scene.add(infoPanel);
+}
+
+function toggleInfoPanel() {
+  if (!xrSessionActive || !infoPanel) {
+    return;
+  }
+  if (infoPanel.visible) {
+    infoPanel.visible = false;
+    return;
+  }
+  refreshInfoPanel();
+  positionGroupInFrontOfCamera(infoPanel, 1.4);
+  infoPanel.visible = true;
+}
+
+// Rebuild the panel's texture from the current image's capture date.
+function refreshInfoPanel() {
+  if (!infoPanel) {
+    return;
+  }
+  let body;
+  if (currentImageDate === 'pending') {
+    body = 'Reading…';
+  } else if (currentImageDate) {
+    body = formatCaptureDate(currentImageDate);
+  } else {
+    body = 'No date recorded';
+  }
+  const previous = infoPanel.material.map;
+  infoPanel.material.map = createInfoTexture('Captured', body);
+  infoPanel.material.needsUpdate = true;
+  previous?.dispose?.();
+}
+
+// Read the capture date for the image being shown, cache it, and refresh the
+// panel if it's open. Reads are from the file's raw bytes, independent of the
+// pixel decode used for the panorama.
+async function updateCurrentImageInfo(imageFile) {
+  const key = fileKey(imageFile);
+  if (infoCache.has(key)) {
+    currentImageDate = infoCache.get(key);
+    if (infoPanel?.visible) {
+      refreshInfoPanel();
+    }
+    return;
+  }
+
+  currentImageDate = 'pending';
+  if (infoPanel?.visible) {
+    refreshInfoPanel();
+  }
+
+  const date = await readCaptureDate(imageFile).catch(() => null);
+  infoCache.set(key, date);
+  // Only adopt the result if we're still on the same image.
+  if (currentImageIndex >= 0 && fileKey(imageFiles[currentImageIndex]) === key) {
+    currentImageDate = date;
+    if (infoPanel?.visible) {
+      refreshInfoPanel();
+    }
+  }
+}
+
+function createInfoTexture(heading, body) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 768;
+  canvas.height = 348;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = 'rgba(12, 18, 28, 0.92)';
+  roundRect(ctx, 0, 0, canvas.width, canvas.height, 32);
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = 'rgba(120, 180, 255, 0.35)';
+  roundRect(ctx, 2, 2, canvas.width - 4, canvas.height - 4, 30);
+  ctx.stroke();
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = 'rgba(150, 200, 255, 0.85)';
+  ctx.font = '600 40px system-ui, "Segoe UI", Roboto, sans-serif';
+  if ('letterSpacing' in ctx) {
+    ctx.letterSpacing = '4px';
+  }
+  ctx.fillText(heading.toUpperCase(), canvas.width / 2, 96);
+
+  if ('letterSpacing' in ctx) {
+    ctx.letterSpacing = '0px';
+  }
+  ctx.fillStyle = '#eef5ff';
+  ctx.font = '600 54px system-ui, "Segoe UI", Roboto, sans-serif';
+  const lines = wrapText(ctx, body, canvas.width - 90);
+  const lineHeight = 64;
+  const startY = 210 - ((lines.length - 1) * lineHeight) / 2;
+  lines.forEach((line, index) => {
+    ctx.fillText(line, canvas.width / 2, startY + index * lineHeight);
+  });
+
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.anisotropy = maxAnisotropy;
+  return texture;
+}
+
+// Turn a raw EXIF ("YYYY:MM:DD HH:MM:SS") or XMP/ISO date string into a
+// readable label, falling back to the raw value if it can't be parsed.
+function formatCaptureDate(raw) {
+  const parsed = parseDateValue(raw);
+  if (!parsed) {
+    return raw;
+  }
+  try {
+    return parsed.toLocaleString(undefined, {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    });
+  } catch (error) {
+    return raw;
+  }
+}
+
+function parseDateValue(raw) {
+  if (!raw) {
+    return null;
+  }
+  // EXIF date: "YYYY:MM:DD HH:MM:SS" -> ISO-ish.
+  const exif = raw.match(/^(\d{4}):(\d{2}):(\d{2})[ T](\d{2}):(\d{2}):(\d{2})/);
+  if (exif) {
+    const [, y, mo, d, h, mi, s] = exif;
+    const date = new Date(Number(y), Number(mo) - 1, Number(d), Number(h), Number(mi), Number(s));
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+  const date = new Date(raw);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+// Read a capture date from a JPEG's APP1 segments — EXIF (DateTimeOriginal /
+// DateTime) first, then XMP (exif:DateTimeOriginal / xmp:CreateDate /
+// photoshop:DateCreated / GPano:FirstPhotoDate). Returns null for non-JPEGs or
+// when no date is present.
+async function readCaptureDate(file) {
+  const buffer = await file.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  if (bytes[0] !== 0xff || bytes[1] !== 0xd8) {
+    return null; // not a JPEG
+  }
+
+  let xmpDate = null;
+  let offset = 2;
+  while (offset + 4 <= bytes.length) {
+    if (bytes[offset] !== 0xff) {
+      break;
+    }
+    const marker = bytes[offset + 1];
+    if (marker === 0xda || marker === 0xd9) {
+      break; // start of scan / end of image — no more metadata
+    }
+    const length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+    if (length < 2) {
+      break;
+    }
+    const segStart = offset + 4;
+    const segEnd = offset + 2 + length;
+
+    if (marker === 0xe1) {
+      if (asciiAt(bytes, segStart, 4) === 'Exif') {
+        const exifDate = parseExifDate(bytes, segStart + 6); // skip "Exif\0\0"
+        if (exifDate) {
+          return exifDate; // EXIF wins outright
+        }
+      } else if (!xmpDate) {
+        xmpDate = parseXmpDate(bytesToString(bytes, segStart, segEnd));
+      }
+    }
+    offset = segEnd;
+  }
+  return xmpDate;
+}
+
+function asciiAt(bytes, start, count) {
+  let s = '';
+  for (let i = 0; i < count && start + i < bytes.length; i += 1) {
+    s += String.fromCharCode(bytes[start + i]);
+  }
+  return s;
+}
+
+function bytesToString(bytes, start, end) {
+  let s = '';
+  for (let i = start; i < end && i < bytes.length; i += 1) {
+    s += String.fromCharCode(bytes[i]);
+  }
+  return s;
+}
+
+function parseXmpDate(xml) {
+  const keys = ['exif:DateTimeOriginal', 'xmp:CreateDate', 'photoshop:DateCreated', 'GPano:FirstPhotoDate', 'GPano:LastPhotoDate'];
+  for (const key of keys) {
+    // Match both attribute form (key="...") and element form (<key>...</key>).
+    const attr = xml.match(new RegExp(`${key}\\s*=\\s*"([^"]+)"`));
+    if (attr) {
+      return attr[1];
+    }
+    const elem = xml.match(new RegExp(`<${key}>([^<]+)</${key}>`));
+    if (elem) {
+      return elem[1];
+    }
+  }
+  return null;
+}
+
+// Minimal EXIF/TIFF walk: read DateTimeOriginal (0x9003) from the Exif sub-IFD,
+// falling back to DateTime (0x0132) in IFD0. `base` points at the TIFF header.
+function parseExifDate(bytes, base) {
+  try {
+    if (base + 8 > bytes.length) {
+      return null;
+    }
+    const little = asciiAt(bytes, base, 2) === 'II';
+    const u16 = (o) => (little ? bytes[o] | (bytes[o + 1] << 8) : (bytes[o] << 8) | bytes[o + 1]);
+    const u32 = (o) => (little
+      ? (bytes[o] | (bytes[o + 1] << 8) | (bytes[o + 2] << 16) | (bytes[o + 3] << 24)) >>> 0
+      : ((bytes[o] << 24) | (bytes[o + 1] << 16) | (bytes[o + 2] << 8) | bytes[o + 3]) >>> 0);
+
+    const readAscii = (valueOffset, count) => {
+      let s = '';
+      for (let i = 0; i < count - 1 && base + valueOffset + i < bytes.length; i += 1) {
+        const c = bytes[base + valueOffset + i];
+        if (c === 0) {
+          break;
+        }
+        s += String.fromCharCode(c);
+      }
+      return s;
+    };
+
+    const ifd0Offset = u32(base + 4);
+    let dateTime = null;
+    let exifIfdOffset = 0;
+
+    const walkIfd = (ifdOffset, wantTags) => {
+      const found = {};
+      const entryBase = base + ifdOffset;
+      if (entryBase + 2 > bytes.length) {
+        return found;
+      }
+      const count = u16(entryBase);
+      for (let i = 0; i < count; i += 1) {
+        const entry = entryBase + 2 + i * 12;
+        if (entry + 12 > bytes.length) {
+          break;
+        }
+        const tag = u16(entry);
+        if (!wantTags.includes(tag)) {
+          continue;
+        }
+        const type = u16(entry + 2);
+        const num = u32(entry + 4);
+        if (type === 2) {
+          // ASCII: inline when <=4 bytes, else at the offset.
+          const valueOffset = num <= 4 ? entry + 8 - base : u32(entry + 8);
+          found[tag] = readAscii(valueOffset, num);
+        } else {
+          found[tag] = u32(entry + 8); // pointer (e.g. Exif IFD)
+        }
+      }
+      return found;
+    };
+
+    const ifd0 = walkIfd(ifd0Offset, [0x0132, 0x8769]);
+    if (ifd0[0x0132]) {
+      dateTime = ifd0[0x0132];
+    }
+    exifIfdOffset = ifd0[0x8769] || 0;
+
+    if (exifIfdOffset) {
+      const exifIfd = walkIfd(exifIfdOffset, [0x9003, 0x9004]);
+      if (exifIfd[0x9003]) {
+        return exifIfd[0x9003]; // DateTimeOriginal
+      }
+      if (exifIfd[0x9004]) {
+        return exifIfd[0x9004]; // DateTimeDigitized
+      }
+    }
+    return dateTime;
+  } catch (error) {
+    return null;
+  }
+}
+
 function createStatusMessage() {
   statusMessage = document.createElement('div');
   statusMessage.id = 'statusMessage';
@@ -1265,6 +1577,9 @@ function handleSessionEnd() {
   applyPassthrough(false); // restore the dark backdrop for the 2D page
   panoGroup.visible = false;
   galleryGroup.visible = false;
+  if (infoPanel) {
+    infoPanel.visible = false;
+  }
   hideMenu();
   setPointerVisibility(true);
   document.getElementById('ui').style.display = 'flex';
@@ -1287,6 +1602,7 @@ function setupControllers() {
     const controller = renderer.xr.getController(i);
     controller.userData.stickActive = false;
     controller.userData.menuPressed = false;
+    controller.userData.infoPressed = false;
     controller.userData.index = i;
 
     // The targetRaySpace returned by getController does not expose the gamepad
@@ -1471,6 +1787,14 @@ function pollControllerInput(controller) {
     pulseController(controller);
   }
   controller.userData.menuPressed = menuPressed;
+
+  // A / X face button (xr-standard index 4) toggles the photo-info panel.
+  const infoPressed = gamepad.buttons[4]?.pressed ?? false;
+  if (infoPressed && !controller.userData.infoPressed) {
+    toggleInfoPanel();
+    pulseController(controller);
+  }
+  controller.userData.infoPressed = infoPressed;
 
   // Thumbstick left/right snaps the panorama in 30° increments while viewing.
   const axes = gamepad.axes;
@@ -1989,6 +2313,8 @@ async function loadStereoImage(imageFile) {
     playMatchingAudio(imageFile.name);
     // Clean, control-free view while looking at the panorama.
     setPointerVisibility(false);
+    // Read this image's capture date (for the A/X info panel) in the background.
+    updateCurrentImageInfo(imageFile);
     // Decode the neighbours in the background so trigger-stepping is instant.
     preloadNeighbours();
   } catch (error) {

@@ -357,7 +357,7 @@ button.subtle:hover{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.26</div>
+  <div id="rev">rev.27</div>
 
   <input
     type="file"
@@ -405,6 +405,12 @@ button.subtle:hover{
     <span id="superResValue">1.4x</span>
   </div>
 
+  <div class="settingRow">
+    <label for="panoScale">Scale</label>
+    <input id="panoScale" type="range" min="0.5" max="1.5" step="0.05" value="1" />
+    <span id="panoScaleValue">1.00x</span>
+  </div>
+
   <button id="clearButton" type="button" class="panelButton" style="display:none">Clear saved library</button>
 
   <a class="settingLink" href="Cardboard_Camera_Converter_Pro.html" target="_blank" rel="noopener">
@@ -426,7 +432,7 @@ button.subtle:hover{
   }
 }
 </script>
-<script type="module" src="app.js?v=26"></script>
+<script type="module" src="app.js?v=27"></script>
 
 </body>
 </html>

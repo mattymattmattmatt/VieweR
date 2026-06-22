@@ -49,6 +49,10 @@ let environmentMesh;
 let passthroughEnabled = false;
 let arSupported = false;
 let panoBrightness = 1;
+// Uniform scale of the panorama spheres. For a 360 pano the eye sits at the
+// sphere centre, so this changes the STEREO depth/scale (smaller sphere = more
+// parallax = world feels closer/smaller), not the mono image. 1.0 = default.
+let panoScale = 1;
 let panoGroup;
 let leftSphere;
 let rightSphere;
@@ -64,6 +68,7 @@ let thumbBuildToken = 0;
 let menuGroup;
 let settingsMenuGroup;
 let vrCropButton;
+let vrScaleButton;
 let loadingText;
 let statusMessage;
 let enterVRButton;
@@ -253,7 +258,56 @@ function setupSettings() {
 
   setupCropControls();
   setupSuperResControl();
+  setupScaleControl();
   applyBrightness();
+}
+
+// Panorama scale: resizes the stereo spheres to dial the perceived depth/scale
+// of the 3D scene. Applies live (no fresh session needed).
+function setupScaleControl() {
+  const slider = document.getElementById('panoScale');
+
+  try {
+    const saved = parseFloat(localStorage.getItem('viewer-pano-scale'));
+    if (!Number.isNaN(saved)) {
+      panoScale = saved;
+    }
+  } catch (error) {
+    /* ignore storage failures */
+  }
+
+  if (slider) {
+    slider.value = String(panoScale);
+    slider.addEventListener('input', () => setPanoScale(parseFloat(slider.value) || 1));
+  }
+
+  applyPanoScale();
+  updateScaleLabel();
+}
+
+function setPanoScale(value) {
+  panoScale = Math.min(1.5, Math.max(0.5, Math.round(value * 100) / 100));
+  applyPanoScale();
+  persist('viewer-pano-scale', String(panoScale));
+
+  const slider = document.getElementById('panoScale');
+  if (slider && slider.value !== String(panoScale)) {
+    slider.value = String(panoScale);
+  }
+  updateScaleLabel();
+}
+
+function applyPanoScale() {
+  if (panoGroup) {
+    panoGroup.scale.setScalar(panoScale);
+  }
+}
+
+function updateScaleLabel() {
+  const label = document.getElementById('panoScaleValue');
+  if (label) {
+    label.textContent = `${panoScale.toFixed(2)}x`;
+  }
 }
 
 // Pole-crop control: Auto (per-image detection) or Manual with a "Crop amount"
@@ -901,27 +955,35 @@ function createMenu() {
   createSettingsMenu();
 }
 
-// In-VR settings: only top/bottom crop, which is the one control that applies
-// live. (Super res and passthrough need a fresh session, so they stay on the 2D
-// title screen.) +/- buttons since 3D sliders are fiddly to drag.
+// In-VR settings: top/bottom crop and panorama scale, both of which apply live.
+// (Super res and passthrough need a fresh session, so they stay on the 2D title
+// screen.) +/- buttons since 3D sliders are fiddly to drag. Tapping the middle
+// CROP/SCALE label resets that control (crop toggles Auto; scale -> 1.0x).
 function createSettingsMenu() {
   settingsMenuGroup = new THREE.Group();
   settingsMenuGroup.visible = false;
 
-  const cropMinus = createMenuButton('–', -0.66, 0.16, 0.34, MENU_BUTTON_HEIGHT);
-  vrCropButton = createMenuButton('CROP', 0, 0.16, 0.84, MENU_BUTTON_HEIGHT);
-  const cropPlus = createMenuButton('+', 0.66, 0.16, 0.34, MENU_BUTTON_HEIGHT);
+  const cropMinus = createMenuButton('–', -0.66, 0.30, 0.34, MENU_BUTTON_HEIGHT);
+  vrCropButton = createMenuButton('CROP', 0, 0.30, 0.84, MENU_BUTTON_HEIGHT);
+  const cropPlus = createMenuButton('+', 0.66, 0.30, 0.34, MENU_BUTTON_HEIGHT);
   cropMinus.userData.onClick = () => adjustVrCrop(-0.05);
   vrCropButton.userData.onClick = toggleVrCropAuto;
   cropPlus.userData.onClick = () => adjustVrCrop(0.05);
 
-  const backButton = createMenuButton('BACK', 0, -0.16, 0.84, MENU_BUTTON_HEIGHT);
+  const scaleMinus = createMenuButton('–', -0.66, 0.04, 0.34, MENU_BUTTON_HEIGHT);
+  vrScaleButton = createMenuButton('SCALE', 0, 0.04, 0.84, MENU_BUTTON_HEIGHT);
+  const scalePlus = createMenuButton('+', 0.66, 0.04, 0.34, MENU_BUTTON_HEIGHT);
+  scaleMinus.userData.onClick = () => adjustVrScale(-0.05);
+  vrScaleButton.userData.onClick = () => adjustVrScale(0); // reset to 1.0x
+  scalePlus.userData.onClick = () => adjustVrScale(0.05);
+
+  const backButton = createMenuButton('BACK', 0, -0.24, 0.84, MENU_BUTTON_HEIGHT);
   backButton.userData.onClick = () => {
     hideSettingsMenu();
     showMenu();
   };
 
-  [cropMinus, vrCropButton, cropPlus, backButton].forEach((button) => {
+  [cropMinus, vrCropButton, cropPlus, scaleMinus, vrScaleButton, scalePlus, backButton].forEach((button) => {
     settingsMenuGroup.add(button);
     interactiveObjects.push(button);
   });
@@ -944,6 +1006,13 @@ function hideSettingsMenu() {
 
 function refreshSettingsLabels() {
   setMenuButtonText(vrCropButton, cropAuto ? 'CROP: AUTO' : `CROP: ${Math.round((1 - keptFraction()) * 100)}%`);
+  setMenuButtonText(vrScaleButton, `SCALE: ${panoScale.toFixed(2)}x`);
+}
+
+// In-VR scale step. A zero delta resets to 1.0x (tapping the middle label).
+function adjustVrScale(delta) {
+  setPanoScale(delta === 0 ? 1 : panoScale + delta);
+  refreshSettingsLabels();
 }
 
 function toggleVrCropAuto() {

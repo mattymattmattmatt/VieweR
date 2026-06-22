@@ -1217,7 +1217,7 @@ async function updateCurrentImageInfo(imageFile) {
     refreshInfoPanel();
   }
 
-  const date = await readCaptureDate(imageFile).catch(() => null);
+  const date = await resolveCaptureDate(imageFile).catch(() => null);
   infoCache.set(key, date);
   // Only adopt the result if we're still on the same image.
   if (currentImageIndex >= 0 && fileKey(imageFiles[currentImageIndex]) === key) {
@@ -1226,6 +1226,41 @@ async function updateCurrentImageInfo(imageFile) {
       refreshInfoPanel();
     }
   }
+}
+
+// Pick the best capture date for a file. The embedded metadata (EXIF/XMP) may
+// be the date the file was COPIED onto the headset rather than when it was
+// taken, but camera filenames (e.g. IMG_20170610_160948...) carry the real
+// capture time. When both exist we keep the EARLIER one — a later metadata date
+// is almost always a copy timestamp. Returns a Date or null.
+async function resolveCaptureDate(file) {
+  const metaDate = parseDateValue(await readCaptureDate(file).catch(() => null));
+  const nameDate = parseFilenameDate(file.name);
+  if (metaDate && nameDate) {
+    return metaDate.getTime() <= nameDate.getTime() ? metaDate : nameDate;
+  }
+  return metaDate || nameDate || null;
+}
+
+// Pull a date out of common camera filename patterns, e.g.
+// "IMG_20170610_160948", "VID_20170610_160948", "PANO_20170610_160948" or a
+// bare "20170610_160948"/"20170610". Returns a Date or null.
+function parseFilenameDate(name) {
+  const m = name.match(/(20\d{2}|19\d{2})(\d{2})(\d{2})(?:[ _\-T]?(\d{2})(\d{2})(\d{2})?)?/);
+  if (!m) {
+    return null;
+  }
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const h = Number(m[4] || 0);
+  const mi = Number(m[5] || 0);
+  const s = Number(m[6] || 0);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) {
+    return null;
+  }
+  const date = new Date(y, mo - 1, d, h, mi, s);
+  return Number.isNaN(date.getTime()) ? null : date;
 }
 
 function createInfoTexture(heading, body) {
@@ -1270,15 +1305,10 @@ function createInfoTexture(heading, body) {
   return texture;
 }
 
-// Turn a raw EXIF ("YYYY:MM:DD HH:MM:SS") or XMP/ISO date string into a
-// readable label, falling back to the raw value if it can't be parsed.
-function formatCaptureDate(raw) {
-  const parsed = parseDateValue(raw);
-  if (!parsed) {
-    return raw;
-  }
+// Format a Date into a readable capture label.
+function formatCaptureDate(date) {
   try {
-    return parsed.toLocaleString(undefined, {
+    return date.toLocaleString(undefined, {
       day: 'numeric',
       month: 'short',
       year: 'numeric',
@@ -1286,7 +1316,7 @@ function formatCaptureDate(raw) {
       minute: '2-digit',
     });
   } catch (error) {
-    return raw;
+    return String(date);
   }
 }
 

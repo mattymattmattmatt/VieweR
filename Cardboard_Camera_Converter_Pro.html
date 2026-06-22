@@ -809,9 +809,42 @@
         date = new Date(fallbackMs);
       }
       if (!date || isNaN(date.getTime())) return null;
+      return dateToIso(date);
+    }
+
+    function dateToIso(date) {
+      if (!date || isNaN(date.getTime())) return null;
       const pad = n => String(n).padStart(2, '0');
       return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate())
         + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes()) + ':' + pad(date.getSeconds());
+    }
+
+    // Pull a date out of common camera filename patterns, e.g.
+    // "IMG_20170610_160948", "VID_...", "PANO_..." or a bare "20170610_160948".
+    function parseFilenameDate(name) {
+      const m = name.match(/(20\d{2}|19\d{2})(\d{2})(\d{2})(?:[ _\-T]?(\d{2})(\d{2})(\d{2})?)?/);
+      if (!m) return null;
+      const y = +m[1], mo = +m[2], d = +m[3], h = +(m[4] || 0), mi = +(m[5] || 0), s = +(m[6] || 0);
+      if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) return null;
+      const date = new Date(y, mo - 1, d, h, mi, s);
+      return isNaN(date.getTime()) ? null : date;
+    }
+
+    // Choose the date to embed: the EXIF/XMP date and the filename date (when
+    // both exist) are reconciled by keeping the EARLIER one, since a later
+    // metadata date is almost always the copy time, not the capture time. Falls
+    // back to the file's lastModified only when nothing else is available.
+    function chooseCaptureIso(rawMeta, fileName, lastModified) {
+      const metaIso = toIsoDate(rawMeta, null);
+      const metaDate = metaIso ? new Date(metaIso) : null;
+      const nameDate = parseFilenameDate(fileName);
+      let chosen = null;
+      if (metaDate && nameDate) {
+        chosen = metaDate.getTime() <= nameDate.getTime() ? metaDate : nameDate;
+      } else {
+        chosen = metaDate || nameDate;
+      }
+      return dateToIso(chosen) || toIsoDate(null, lastModified);
     }
 
     // Build a minimal XMP packet carrying the capture date (standard namespaces
@@ -892,9 +925,9 @@
         // Capture date from the source bytes before conversion strips metadata.
         try {
           const rawDate = extractCaptureDate(reader.result);
-          window.__currentConvertingDate = toIsoDate(rawDate, file.lastModified);
+          window.__currentConvertingDate = chooseCaptureIso(rawDate, thisFilename, file.lastModified);
         } catch (err) {
-          window.__currentConvertingDate = toIsoDate(null, file.lastModified);
+          window.__currentConvertingDate = chooseCaptureIso(null, thisFilename, file.lastModified);
         }
         window.converter.convert(reader.result);
       };

@@ -90,6 +90,9 @@ const hands = [];
 
 // How far the laser reaches when it isn't resting on a button/thumbnail.
 const POINTER_REACH = 6;
+// Start the beam a few cm ahead of the ray origin so it doesn't visually pierce
+// the controller model / the hand.
+const POINTER_START = 0.035;
 const interactiveObjects = [];
 const galleryObjects = [];
 
@@ -1753,14 +1756,21 @@ function setupControllers() {
     controller.addEventListener('connected', (event) => {
       controller.userData.gamepad = event.data.gamepad;
       controller.userData.handedness = event.data.handedness;
+      controller.userData.isHand = !!event.data.hand;
     });
     controller.addEventListener('disconnected', () => {
       controller.userData.gamepad = null;
+      controller.userData.isHand = false;
     });
 
     // While viewing a panorama, the trigger flips to the previous/next image
     // (left/right hand). Otherwise it points/clicks the gallery and menu.
+    // Hand pinches also raise this event, but we handle those in handleHand so
+    // pinch can't double-fire (step image AND toggle menu) — bail here for hands.
     controller.addEventListener('selectstart', () => {
+      if (controller.userData.isHand) {
+        return;
+      }
       if (handleViewerTrigger(controller)) {
         return;
       }
@@ -1837,7 +1847,12 @@ function updatePointer(controller, hit) {
     return;
   }
   const reach = hit ? hit.distance : POINTER_REACH;
-  pointer.userData.beam.scale.z = reach;
+  // Emerge the beam a little ahead of the origin so it doesn't clip through the
+  // controller/hand; the tip still lands on the hit point.
+  const start = Math.min(POINTER_START, reach * 0.5);
+  const beam = pointer.userData.beam;
+  beam.scale.z = Math.max(0.001, reach - start);
+  beam.position.z = -start;
   const reticle = pointer.userData.reticle;
   if (hit) {
     reticle.visible = true;
@@ -1868,44 +1883,61 @@ function setupHands() {
     const hand = renderer.xr.getHand(i);
     hand.add(factory.createHandModel(hand, 'mesh'));
     hand.userData.isPinching = false;
+    hand.userData.index = i; // pairs with controllers[i] (same input source)
     scene.add(hand);
     hands.push(hand);
   }
 }
 
-function detectPinch(hand) {
+// Pinch detection with hysteresis: engage when the index/thumb tips close to
+// 2cm, release once they open past 3cm. Returns true only on the engage edge,
+// so a single pinch fires exactly one action (no jitter / repeats).
+function pinchEngaged(hand) {
   const indexTip = hand.joints['index-finger-tip'];
   const thumbTip = hand.joints['thumb-tip'];
-
   if (!indexTip || !thumbTip) {
     return false;
   }
 
-  return indexTip.position.distanceTo(thumbTip.position) < 0.025;
+  const distance = indexTip.position.distanceTo(thumbTip.position);
+  if (hand.userData.isPinching) {
+    if (distance > 0.03) {
+      hand.userData.isPinching = false;
+    }
+    return false;
+  }
+  if (distance < 0.02) {
+    hand.userData.isPinching = true;
+    return true; // rising edge
+  }
+  return false;
 }
 
 function handleHand(hand) {
-  const indexTip = hand.joints['index-finger-tip'];
-  if (!indexTip) {
+  // Hover + the visible laser are driven by handleController along the hand's
+  // system pointing ray (the same ray the beam shows). Here we only turn a pinch
+  // into a click on whatever that ray is resting on, so selection matches the
+  // beam — much easier to aim than the old fingertip-direction ray.
+  if (!hand.joints || !hand.joints['index-finger-tip']) {
+    return;
+  }
+  if (!pinchEngaged(hand)) {
     return;
   }
 
-  raycaster.ray.origin.copy(indexTip.position);
-  raycaster.ray.direction.set(0, 0, -1).applyQuaternion(indexTip.quaternion);
+  const controller = controllers[hand.userData.index];
+  if (!controller) {
+    return;
+  }
 
-  const hit = updateHoverState();
-  const pinch = detectPinch(hand);
-
-  if (pinch && !hand.userData.isPinching) {
-    if (hit) {
-      runInteraction(hit.object);
-    } else {
-      // Hand tracking has no B/Y button, so a pinch on empty space opens the menu.
+  // clickFromRay aims along the controller/hand target ray and clicks the hovered
+  // target, returning false if nothing was hit. Hands have no B/Y button, so an
+  // empty pinch from the clean panorama view opens the menu.
+  if (!clickFromRay(controller)) {
+    if (!menuGroup.visible && !settingsMenuGroup.visible && !galleryGroup.visible) {
       toggleMenu();
     }
   }
-
-  hand.userData.isPinching = pinch;
 }
 
 function handleController(controller) {

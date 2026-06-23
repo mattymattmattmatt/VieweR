@@ -59,6 +59,11 @@ let rightSphere;
 let leftTexture = null;
 let rightTexture = null;
 let panoLayersReady = false;
+// How the current image is displayed, from its filename:
+//   'stereo' (default) — over-under: top half -> left eye, bottom -> right (3D)
+//   '2d'    (-2D tag)   — flat: whole image to both eyes, no depth
+//   'sphere'(-SPHERE)   — flat full 360 sphere (no pole cropping)
+let currentPanoMode = 'stereo';
 let galleryGroup;
 let galleryUpArrow;
 let galleryDownArrow;
@@ -576,39 +581,72 @@ function setManualCrop(keptFraction) {
 
 function applyCropLive() {
   buildPanoGeometry();
-  if (leftTexture) {
-    configureEyeTexture(leftTexture, 'top');
-  }
-  if (rightTexture) {
-    configureEyeTexture(rightTexture, 'bottom');
-  }
+  mapPanoTextures();
 }
 
 function keptFraction() {
   return 1 - cropTop - cropBottom;
 }
 
+// Decide how a file is shown from its name. A "-2D" tag means a flat (mono)
+// panorama; "-SPHERE" means a flat full 360 sphere. Anything else is treated as
+// the over-under stereo the app was built for (unchanged behaviour).
+function detectPanoMode(name) {
+  const n = String(name || '');
+  if (/-sphere(?=[-_. ]|$)/i.test(n)) {
+    return 'sphere';
+  }
+  if (/-2d(?=[-_. ]|$)/i.test(n)) {
+    return '2d';
+  }
+  return 'stereo';
+}
+
+// Map the current eye textures according to the pano mode. Stereo splits the
+// file into top/bottom halves (one per eye); the flat modes show the whole
+// image to BOTH eyes, so there's no parallax and therefore no depth.
+function mapPanoTextures() {
+  if (currentPanoMode === 'stereo') {
+    if (leftTexture) {
+      configureEyeTexture(leftTexture, 'top');
+    }
+    if (rightTexture) {
+      configureEyeTexture(rightTexture, 'bottom');
+    }
+  } else {
+    if (leftTexture) {
+      configureEyeTexture(leftTexture, 'full');
+    }
+    if (rightTexture) {
+      configureEyeTexture(rightTexture, 'full');
+    }
+  }
+}
+
 function applyPanoTextures(baseTexture) {
   disposePanoTextures();
 
-  // In Auto mode, detect this image's blurry padding (top and bottom measured
-  // separately) and crop each end to the sharp content; otherwise keep the
-  // manual value. Then rebuild the sphere band.
-  if (cropAuto) {
-    const detected = detectContentCrop(baseTexture.image);
+  if (currentPanoMode === 'sphere') {
+    // A true 360 sphere fills the whole vertical FOV — no pole cropping.
+    cropTop = 0;
+    cropBottom = 0;
+  } else if (cropAuto) {
+    // In Auto mode, detect this image's blurry padding (top and bottom measured
+    // separately) and crop each end to the sharp content; otherwise keep the
+    // manual value. Flat panos are analysed over the full frame; stereo over one
+    // eye (top half), which represents the same scene.
+    const detected = detectContentCrop(baseTexture.image, currentPanoMode !== 'stereo');
     cropTop = detected ? detected.top : (1 - DEFAULT_PANO_CROP) / 2;
     cropBottom = detected ? detected.bottom : (1 - DEFAULT_PANO_CROP) / 2;
   }
   buildPanoGeometry();
 
   // Both eyes are clones of the cached base so the base stays reusable for
-  // preloading. Top half of the file -> left eye. (If depth looks inverted on
-  // the headset, swap 'top'/'bottom' below.)
+  // preloading. mapPanoTextures handles the per-mode split. (If stereo depth
+  // looks inverted on the headset, swap 'top'/'bottom' in mapPanoTextures.)
   leftTexture = baseTexture.clone();
-  configureEyeTexture(leftTexture, 'top');
-
   rightTexture = baseTexture.clone();
-  configureEyeTexture(rightTexture, 'bottom');
+  mapPanoTextures();
 
   leftSphere.material.map = leftTexture;
   leftSphere.material.color.setScalar(panoBrightness);
@@ -626,7 +664,7 @@ function applyPanoTextures(baseTexture) {
 // blur→content line is the strongest COLOUR step (using RGB, not just
 // brightness, so a sky-blur→sky line — similar brightness, different hue — is
 // still found), and (3) crop to that line, keeping real sky/ground.
-function detectContentCrop(image) {
+function detectContentCrop(image, analyzeFull) {
   try {
     const sourceWidth = image.naturalWidth || image.width;
     const sourceHeight = image.naturalHeight || image.height;
@@ -640,8 +678,10 @@ function detectContentCrop(image) {
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
-    // Analyse the top eye (top half of the file) as a representative equirect.
-    ctx.drawImage(image, 0, 0, sourceWidth, Math.floor(sourceHeight / 2), 0, 0, w, h);
+    // Stereo: analyse the top eye (top half of the file) as a representative
+    // equirect. Flat panos: analyse the whole frame (it IS the scene).
+    const regionHeight = analyzeFull ? sourceHeight : Math.floor(sourceHeight / 2);
+    ctx.drawImage(image, 0, 0, sourceWidth, regionHeight, 0, 0, w, h);
     const data = ctx.getImageData(0, 0, w, h).data;
 
     const meanR = new Float32Array(h);
@@ -758,11 +798,14 @@ function detectContentCrop(image) {
 }
 
 function configureEyeTexture(texture, eye) {
-  // Select this eye's half of the file, then keep only the [cropTop, cropBottom]
-  // band, matching the partial sphere. Derived so cropTop=cropBottom=0 == full.
+  // Keep only the [cropTop, cropBottom] band, matching the partial sphere.
+  // 'top'/'bottom' select an eye-half of an over-under file (stereo); 'full'
+  // maps the whole image (flat 2D / sphere — same to both eyes, so no depth).
   const kept = Math.max(0.1, 1 - cropTop - cropBottom);
-  const repeatY = 0.5 * kept;
-  const offsetY = (eye === 'top' ? 0.5 : 0.0) + 0.5 * cropBottom;
+  const repeatY = eye === 'full' ? kept : 0.5 * kept;
+  const offsetY = eye === 'full'
+    ? cropBottom
+    : (eye === 'top' ? 0.5 : 0.0) + 0.5 * cropBottom;
 
   texture.colorSpace = THREE.SRGBColorSpace;
   texture.wrapS = THREE.RepeatWrapping; // seamless 360° horizontally
@@ -2317,13 +2360,17 @@ function fileKey(file) {
 // Decodes the image DOWNSCALED (~1024px wide) so a big library doesn't exhaust
 // memory — thumbnails don't need full resolution.
 async function createThumbnailEyes(file) {
+  // Flat panos (-2D/-SPHERE) have no second eye, so both card-eyes show the
+  // whole image; stereo files keep the top/bottom split.
+  const eyeHalves = detectPanoMode(file.name) === 'stereo' ? ['top', 'bottom'] : ['full', 'full'];
+
   // Preferred path: decode straight to a small bitmap (low memory).
   if (typeof createImageBitmap === 'function') {
     try {
       const bitmap = await createImageBitmap(file, { resizeWidth: 1920, resizeQuality: 'medium' });
       const eyes = {
-        left: halfTexture(bitmap, bitmap.width, bitmap.height, 'top'),
-        right: halfTexture(bitmap, bitmap.width, bitmap.height, 'bottom'),
+        left: halfTexture(bitmap, bitmap.width, bitmap.height, eyeHalves[0]),
+        right: halfTexture(bitmap, bitmap.width, bitmap.height, eyeHalves[1]),
       };
       bitmap.close?.();
       return eyes;
@@ -2338,8 +2385,8 @@ async function createThumbnailEyes(file) {
     image.src = url;
     await image.decode();
     return {
-      left: halfTexture(image, image.naturalWidth, image.naturalHeight, 'top'),
-      right: halfTexture(image, image.naturalWidth, image.naturalHeight, 'bottom'),
+      left: halfTexture(image, image.naturalWidth, image.naturalHeight, eyeHalves[0]),
+      right: halfTexture(image, image.naturalWidth, image.naturalHeight, eyeHalves[1]),
     };
   } finally {
     URL.revokeObjectURL(url);
@@ -2353,11 +2400,13 @@ function halfTexture(source, width, height, which) {
   canvas.height = 278;
   const ctx = canvas.getContext('2d');
 
-  // Keep the centre band of each eye-half, dropping the blurry top/bottom pad.
-  const halfHeight = Math.floor(height / 2);
-  const keptHeight = Math.floor(halfHeight * THUMB_CROP);
-  const inset = Math.floor((halfHeight - keptHeight) / 2);
-  const sourceY = (which === 'top' ? 0 : halfHeight) + inset;
+  // Keep the centre band of the chosen region ('full' = whole image, otherwise
+  // an eye-half), dropping the blurry top/bottom pad.
+  const regionHeight = which === 'full' ? height : Math.floor(height / 2);
+  const regionTop = which === 'bottom' ? Math.floor(height / 2) : 0;
+  const keptHeight = Math.floor(regionHeight * THUMB_CROP);
+  const inset = Math.floor((regionHeight - keptHeight) / 2);
+  const sourceY = regionTop + inset;
   ctx.drawImage(source, 0, sourceY, width, keptHeight, 0, 0, canvas.width, canvas.height);
 
   const texture = new THREE.CanvasTexture(canvas);
@@ -2406,6 +2455,7 @@ async function loadStereoImage(imageFile) {
   try {
     const baseTexture = await getBaseTexture(imageFile);
 
+    currentPanoMode = detectPanoMode(imageFile.name);
     applyPanoTextures(baseTexture);
     panoGroup.visible = true;
     loadingText.visible = false;

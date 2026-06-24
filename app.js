@@ -2122,6 +2122,116 @@ function setupInputs() {
   addButton.addEventListener('click', () => folderInput.click());
   folderInput.addEventListener('change', (event) => handlePickedFiles(event.target.files, event.target));
   clearButton.addEventListener('click', clearLibrary);
+
+  // Bulk import from a single .zip — one file pick instead of 300.
+  const addZipButton = document.getElementById('addZipButton');
+  const zipInput = document.getElementById('zipInput');
+  if (addZipButton && zipInput) {
+    addZipButton.addEventListener('click', () => zipInput.click());
+    zipInput.addEventListener('change', (event) => {
+      handleZipInput(event.target.files);
+      event.target.value = ''; // allow re-importing the same pack later
+    });
+  }
+}
+
+// Import one or more .zip packs of images. Extracted images flow through the
+// same path as picked files (dedup, IndexedDB persistence, gallery rebuild,
+// filename-date + 2D/sphere detection), so a single pick replaces hundreds and
+// the images also survive a reload — no need to re-import.
+async function handleZipInput(fileList) {
+  const zips = Array.from(fileList || []).filter(isZipFile);
+  for (const zip of zips) {
+    await importZip(zip);
+  }
+}
+
+function isZipFile(file) {
+  return /\.zip$/i.test(file.name) || file.type === 'application/zip' || file.type === 'application/x-zip-compressed';
+}
+
+async function importZip(file) {
+  if (typeof JSZip === 'undefined') {
+    updateStatus('ZIP support could not load (no connection to the JSZip library). Check your internet and reload the page.');
+    return;
+  }
+
+  updateStatus(`Opening ${file.name}…`);
+  let archive;
+  try {
+    archive = await JSZip.loadAsync(file);
+  } catch (error) {
+    updateStatus(`Couldn't read ${file.name} — is it a valid .zip?`);
+    return;
+  }
+
+  // Collect image entries; skip folders, macOS resource forks and hidden dotfiles.
+  const entries = [];
+  archive.forEach((path, entry) => {
+    if (entry.dir || path.startsWith('__MACOSX/')) {
+      return;
+    }
+    const base = path.split('/').pop();
+    if (!base || base.startsWith('.')) {
+      return;
+    }
+    if (IMAGE_EXTENSIONS.test(base)) {
+      entries.push({ base, entry });
+    }
+  });
+
+  if (!entries.length) {
+    updateStatus(`No images found in ${file.name}.`);
+    return;
+  }
+
+  // Natural-sort by filename so the gallery order is sensible (1,2,…,10 not 1,10,2).
+  entries.sort((a, b) => a.base.localeCompare(b.base, undefined, { numeric: true, sensitivity: 'base' }));
+
+  // Extract one at a time (not all at once) to keep the peak memory down.
+  const files = [];
+  for (let i = 0; i < entries.length; i += 1) {
+    const { base, entry } = entries[i];
+    try {
+      const blob = await entry.async('blob');
+      files.push(new File([blob], base, { type: mimeFromName(base), lastModified: entryDate(entry) }));
+    } catch (error) {
+      /* skip a single unreadable entry, keep going */
+    }
+    if (i % 10 === 0 || i === entries.length - 1) {
+      updateStatus(`Unzipping ${file.name}: ${i + 1} / ${entries.length}…`);
+    }
+  }
+
+  archive = null; // release the compressed data
+
+  if (!files.length) {
+    updateStatus(`Couldn't extract any images from ${file.name}.`);
+    return;
+  }
+
+  // Reuse the normal add path (dedup + persist + gallery rebuild).
+  handlePickedFiles(files, null);
+  updateStatus(`Added ${files.length} image${files.length === 1 ? '' : 's'} from ${file.name}. Saved to your library — ready to use offline.`);
+}
+
+function mimeFromName(name) {
+  const ext = (name.split('.').pop() || '').toLowerCase();
+  const map = {
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    webp: 'image/webp',
+    avif: 'image/avif',
+    gif: 'image/gif',
+    bmp: 'image/bmp',
+  };
+  return map[ext] || '';
+}
+
+function entryDate(entry) {
+  const time = entry?.date instanceof Date ? entry.date.getTime() : Date.now();
+  return Number.isFinite(time) ? time : Date.now();
 }
 
 // Drag-and-drop: Quest's browser supports the HTML5 drop API, so users can open
@@ -2154,8 +2264,14 @@ function setupDropZone() {
     event.preventDefault();
     showOverlay(false);
     const files = await filesFromDataTransfer(event.dataTransfer);
-    if (files.length) {
-      handlePickedFiles(files, null);
+    // A dropped .zip is unpacked; everything else is added directly.
+    const zips = files.filter(isZipFile);
+    const rest = files.filter((file) => !isZipFile(file));
+    if (rest.length) {
+      handlePickedFiles(rest, null);
+    }
+    for (const zip of zips) {
+      await importZip(zip);
     }
   });
 }

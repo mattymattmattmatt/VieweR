@@ -357,7 +357,7 @@ button.subtle:hover{
     alt="3D Pano VieweR Logo"
   />
 
-  <div id="rev">rev.29</div>
+  <div id="rev">rev.30</div>
 
   <input
     type="file"
@@ -368,6 +368,14 @@ button.subtle:hover{
   />
 
   <button id="addButton" type="button">➕ Add image</button>
+  <button id="addZipButton" type="button">📦 Load .zip pack</button>
+
+  <input
+    type="file"
+    id="zipInput"
+    accept=".zip,application/zip,application/x-zip-compressed"
+    style="display:none"
+  />
 
 </div>
 
@@ -419,7 +427,7 @@ button.subtle:hover{
 </div>
 
 <div id="dropOverlay">
-  <div class="box">Drop images to add them</div>
+  <div class="box">Drop images or a .zip pack to add them</div>
 </div>
 
 <canvas id="xr-canvas"></canvas>
@@ -432,7 +440,8 @@ button.subtle:hover{
   }
 }
 </script>
-<script type="module" src="app.js?v=29"></script>
+<script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+<script type="module" src="app.js?v=30"></script>
 
 </body>
 </html>

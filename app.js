@@ -34,6 +34,14 @@ let cropBottom = (1 - DEFAULT_PANO_CROP) / 2;
 let cropAuto = true;
 let manualCrop = DEFAULT_PANO_CROP;
 
+// Flat (-2D) panoramas are shown on a curved arc in front of the viewer whose
+// horizontal:vertical angular size matches the image's width:height (so pixels
+// stay square and nothing is stretched). We can't know the real capture FOV, so
+// we assume a comfortable vertical FOV and derive the horizontal arc from the
+// image's aspect ratio. flatPanoAspect is the current flat image's width/height.
+const FLAT_PANO_VFOV = THREE.MathUtils.degToRad(55);
+let flatPanoAspect = 2;
+
 // Render sharpness / performance tuning (Quest).
 // - Super resolution > 1 supersamples the XR framebuffer for crisper detail
 //   (applies on entering VR). Adjustable in Settings.
@@ -560,10 +568,37 @@ function createPanoSpheres() {
 // Render only the kept latitude band so the blurry padded poles fall outside the
 // geometry. cropTop/cropBottom are removed independently, so an image with more
 // blur on top than bottom is trimmed correctly (not symmetrically).
+// Horizontal/vertical arc (radians) for a flat pano of the given aspect, with
+// square pixels. We fix the vertical FOV and scale the horizontal arc by aspect;
+// if that would exceed a full turn, clamp it and shrink the vertical to match.
+function flatPanoArc(aspect) {
+  let theta = FLAT_PANO_VFOV;
+  let phi = theta * aspect;
+  if (phi > Math.PI * 2) {
+    phi = Math.PI * 2;
+    theta = phi / aspect;
+  }
+  return { phi, theta };
+}
+
 function buildPanoGeometry() {
-  const thetaStart = Math.PI * cropTop;
-  const thetaLength = Math.PI * Math.max(0.1, 1 - cropTop - cropBottom);
-  const geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, thetaStart, thetaLength);
+  let geometry;
+  if (currentPanoMode === 'sphere') {
+    // True 360 equirect -> full sphere.
+    geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, 0, Math.PI);
+  } else if (currentPanoMode === '2d') {
+    // Flat pano -> a curved arc centred in front of the viewer (-Z), sized to
+    // the image aspect so it isn't stretched. Nothing is cropped.
+    const { phi, theta } = flatPanoArc(flatPanoAspect);
+    const phiStart = -Math.PI / 2 - phi / 2; // centre the arc on forward
+    const thetaStart = (Math.PI - theta) / 2; // centre it on the equator
+    geometry = new THREE.SphereGeometry(50, 96, 48, phiStart, phi, thetaStart, theta);
+  } else {
+    // Over-under stereo (default): full 360 wrap, vertical band from the crop.
+    const thetaStart = Math.PI * cropTop;
+    const thetaLength = Math.PI * Math.max(0.1, 1 - cropTop - cropBottom);
+    geometry = new THREE.SphereGeometry(50, 64, 48, 0, Math.PI * 2, thetaStart, thetaLength);
+  }
   geometry.scale(-1, 1, 1);
 
   const previous = leftSphere.geometry;
@@ -633,6 +668,14 @@ function applyPanoTextures(baseTexture) {
     // A true 360 sphere fills the whole vertical FOV — no pole cropping.
     cropTop = 0;
     cropBottom = 0;
+  } else if (currentPanoMode === '2d') {
+    // Flat pano: no crop; the arc geometry handles the aspect instead.
+    cropTop = 0;
+    cropBottom = 0;
+    const img = baseTexture.image;
+    const w = img?.naturalWidth || img?.width || 2;
+    const h = img?.naturalHeight || img?.height || 1;
+    flatPanoAspect = h > 0 ? w / h : 2;
   } else if (cropAuto) {
     // In Auto mode, detect this image's blurry padding (top and bottom measured
     // separately) and crop each end to the sharp content; otherwise keep the
@@ -805,13 +848,14 @@ function configureEyeTexture(texture, eye) {
   // 'top'/'bottom' select an eye-half of an over-under file (stereo); 'full'
   // maps the whole image (flat 2D / sphere — same to both eyes, so no depth).
   const kept = Math.max(0.1, 1 - cropTop - cropBottom);
-  const repeatY = eye === 'full' ? kept : 0.5 * kept;
-  const offsetY = eye === 'full'
-    ? cropBottom
-    : (eye === 'top' ? 0.5 : 0.0) + 0.5 * cropBottom;
+  // 'full' (flat 2D / sphere) always maps the whole image — the arc/sphere
+  // geometry handles its shape, so crop values don't apply.
+  const repeatY = eye === 'full' ? 1 : 0.5 * kept;
+  const offsetY = eye === 'full' ? 0 : (eye === 'top' ? 0.5 : 0.0) + 0.5 * cropBottom;
 
   texture.colorSpace = THREE.SRGBColorSpace;
-  texture.wrapS = THREE.RepeatWrapping; // seamless 360° horizontally
+  // 360 modes wrap seamlessly; the flat 2D arc doesn't (it ends at the edges).
+  texture.wrapS = currentPanoMode === '2d' ? THREE.ClampToEdgeWrapping : THREE.RepeatWrapping;
   texture.wrapT = THREE.ClampToEdgeWrapping;
   texture.minFilter = THREE.LinearFilter;
   texture.magFilter = THREE.LinearFilter;
@@ -2574,14 +2618,24 @@ function halfTexture(source, width, height, which) {
   canvas.height = 278;
   const ctx = canvas.getContext('2d');
 
-  // Keep the centre band of the chosen region ('full' = whole image, otherwise
-  // an eye-half), dropping the blurry top/bottom pad.
-  const regionHeight = which === 'full' ? height : Math.floor(height / 2);
-  const regionTop = which === 'bottom' ? Math.floor(height / 2) : 0;
-  const keptHeight = Math.floor(regionHeight * THUMB_CROP);
-  const inset = Math.floor((regionHeight - keptHeight) / 2);
-  const sourceY = regionTop + inset;
-  ctx.drawImage(source, 0, sourceY, width, keptHeight, 0, 0, canvas.width, canvas.height);
+  if (which === 'full') {
+    // Flat pano (-2D/-SPHERE): show the WHOLE image, letterboxed to preserve its
+    // aspect ratio so the thumbnail isn't stretched.
+    ctx.fillStyle = '#0c131c';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    const scale = Math.min(canvas.width / width, canvas.height / height);
+    const drawW = width * scale;
+    const drawH = height * scale;
+    ctx.drawImage(source, 0, 0, width, height, (canvas.width - drawW) / 2, (canvas.height - drawH) / 2, drawW, drawH);
+  } else {
+    // Stereo: keep the centre band of this eye-half, dropping blurry top/bottom pad.
+    const regionHeight = Math.floor(height / 2);
+    const regionTop = which === 'bottom' ? Math.floor(height / 2) : 0;
+    const keptHeight = Math.floor(regionHeight * THUMB_CROP);
+    const inset = Math.floor((regionHeight - keptHeight) / 2);
+    const sourceY = regionTop + inset;
+    ctx.drawImage(source, 0, sourceY, width, keptHeight, 0, 0, canvas.width, canvas.height);
+  }
 
   const texture = new THREE.CanvasTexture(canvas);
   texture.colorSpace = THREE.SRGBColorSpace;

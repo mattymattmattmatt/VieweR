@@ -1932,9 +1932,11 @@ function handleHand(hand) {
 
   // clickFromRay aims along the controller/hand target ray and clicks the hovered
   // target, returning false if nothing was hit. Hands have no B/Y button, so an
-  // empty pinch from the clean panorama view opens the menu.
+  // empty pinch toggles the menu: it opens from the clean panorama view and
+  // closes an open menu. (Skipped while the thumbnail grid is up, where an empty
+  // pinch shouldn't pop the menu over it.)
   if (!clickFromRay(controller)) {
-    if (!menuGroup.visible && !settingsMenuGroup.visible && !galleryGroup.visible) {
+    if (menuGroup.visible || settingsMenuGroup.visible || !galleryGroup.visible) {
       toggleMenu();
     }
   }
@@ -2360,6 +2362,7 @@ function handlePickedFiles(fileList, inputEl) {
   });
 
   imageFiles = loadedFiles.filter(isImageFile);
+  sortImagesByCaptureDate();
   galleryDirty = true;
 
   if (inputEl) {
@@ -2493,6 +2496,7 @@ async function restoreLibrary() {
   });
 
   imageFiles = loadedFiles.filter(isImageFile);
+  sortImagesByCaptureDate();
   galleryDirty = true;
   updateEnterVRButton();
   updateLibraryControls();
@@ -2501,6 +2505,28 @@ async function restoreLibrary() {
 // Stable identity for a picked File so the same image isn't added twice.
 function fileKey(file) {
   return `${file.name}:${file.size}:${file.lastModified}`;
+}
+
+// Sort key for gallery/stepping order: the photo's capture time. Uses an
+// already-read embedded date (EXIF/XMP) when we have one cached, else the date
+// in the filename (camera names like IMG_20170610_160948), else the file's own
+// timestamp as a last resort.
+function captureSortKey(file) {
+  const cached = infoCache.get(fileKey(file));
+  if (cached instanceof Date) {
+    return cached.getTime();
+  }
+  const nameDate = parseFilenameDate(file.name);
+  if (nameDate) {
+    return nameDate.getTime();
+  }
+  return file.lastModified || 0;
+}
+
+// Order images oldest -> newest so the gallery (which lists from the end up)
+// shows the NEWEST at the top, and trigger-stepping runs older <-> newer.
+function sortImagesByCaptureDate() {
+  imageFiles.sort((a, b) => captureSortKey(a) - captureSortKey(b));
 }
 
 // Build a stereo pair of thumbnail textures (top half -> left eye, bottom half
